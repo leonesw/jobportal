@@ -1,0 +1,257 @@
+# ==============================================================
+#  Stellenradar – Firmenliste
+#
+#  Diese Firmen fragt das Radar zusätzlich direkt auf ihren
+#  Karriereseiten ab, jede Stunde, wie die Arbeitsagentur.
+#  Es zählen nur Stellen, die in deinen Regionen liegen
+#  (siehe einstellungen.toml) und zu deinen Bereichen passen.
+#
+#  Eine Firma hinzufügen: einen passenden Block kopieren und
+#  anpassen. Mögliche Werte für "system":
+#
+#    personio   konto = Teil vor ".jobs.personio.de"
+#    recruitee  konto = Teil vor ".recruitee.com"
+#    greenhouse konto = Board-Name aus "greenhouse.io/<name>"
+#    workday    host, mandant, seiten, suche (Suchwörter)
+#    phenom     basis, sprache, land, jobpfad
+#    rss        feeds (RSS-Adressen, je mit Ort)
+#    nextjs     url (Stellensuche mit eingebetteten Daten)
+#
+#  "bereiche" (optional) gilt nur, wenn der Stellentitel selbst
+#  keinen Bereich erkennen lässt – für Boutiquen mit Titeln wie
+#  "Analyst (m/w/d)". Bürojobs, IT, Marketing usw. bleiben draußen.
+#
+#  "sitz" (optional) gilt für Anzeigen ganz ohne Ortsangabe.
+#  "aliase" (optional) sind weitere Namen, unter denen die Firma
+#  bei der Arbeitsagentur inseriert. Steht eine Stelle dort und
+#  auf der Karriereseite, erscheint sie nur einmal.
+#
+#  Eine Firma vorübergehend abschalten: vor jede Zeile ihres
+#  Blocks ein # setzen.
+# ==============================================================
+
+
+# --------------------------------------------------------------
+#  Große und mittelgroße Prüfungs- und Beratungsgesellschaften
+# --------------------------------------------------------------
+
+[[firma]]
+name = "PwC Deutschland"
+aliase = ["PricewaterhouseCoopers"]
+system = "phenom"
+basis = "https://jobs.pwc.de"
+sprache = "de_de"
+land = "de"
+jobpfad = "/de/de/job/"
+
+[[firma]]
+name = "Grant Thornton"
+system = "rss"
+feeds = [
+  { url = "https://gtde-career.talent-soft.com/handlers/offerRss.ashx?LCID=1031&Rss_JobRegion=2254", ort = "Frankfurt am Main" },
+  { url = "https://gtde-career.talent-soft.com/handlers/offerRss.ashx?LCID=1031&Rss_JobRegion=2261", ort = "Wiesbaden" },
+]
+
+[[firma]]
+name = "Forvis Mazars"
+system = "nextjs"
+url = "https://karriere-de.forvismazars.com/stellensuche"
+
+[[firma]]
+name = "FALK"
+sitz = "Heidelberg"
+system = "personio"
+konto = "falk"
+
+[[firma]]
+name = "Schüllermann und Partner"
+sitz = "Dreieich"
+system = "personio"
+konto = "schuellermann-und-partner-ag"
+
+[[firma]]
+name = "Nexia"
+system = "personio"
+konto = "nexia"
+
+[[firma]]
+name = "GKK Partners"
+system = "personio"
+konto = "gkk-partners-partg-mbb"
+
+[[firma]]
+name = "Dr. Kleeberg & Partner"
+system = "personio"
+konto = "dr-kleeberg-partner-gmbh-wpg-stbg"
+
+[[firma]]
+name = "BRB Appel & Partner"
+system = "personio"
+konto = "brbappel-partner"
+
+[[firma]]
+name = "AWP Gruppe"
+system = "personio"
+konto = "awp-gruppe"
+
+[[firma]]
+name = "PKF Wulf Gruppe"
+system = "personio"
+konto = "pkf-wulf-gruppe"
+
+[[firma]]
+name = "HBM"
+system = "personio"
+konto = "hbm"
+
+[[firma]]
+name = "BHU"
+system = "personio"
+konto = "bhu"
+
+[[firma]]
+name = "ECOVIS KSO"
+system = "personio"
+konto = "ecovis-kso"
+
+[[firma]]
+name = "KBHT"
+system = "personio"
+konto = "kbht"
+
+[[firma]]
+name = "bw partner"
+system = "personio"
+konto = "bw-partner-partnerschaft-mbb"
+
+
+# --------------------------------------------------------------
+#  M&A, Corporate Finance und Debt Advisory
+# --------------------------------------------------------------
+
+[[firma]]
+name = "IMAP M&A Consultants"
+sitz = "Mannheim"
+system = "personio"
+konto = "imap-ma-consultants-ag"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Houlihan Lokey"
+system = "workday"
+host = "hl.wd1.myworkdayjobs.com"
+mandant = "hl"
+seiten = ["Lateral", "Campus"]
+suche = ["Frankfurt", "Mannheim"]
+
+[[firma]]
+name = "Alantra"
+system = "workday"
+host = "alantra.wd3.myworkdayjobs.com"
+mandant = "alantra"
+seiten = ["Alantra"]
+suche = ["Frankfurt"]
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Eight Advisory"
+system = "recruitee"
+konto = "8advisory"
+
+[[firma]]
+name = "MCF Corporate Finance"
+system = "personio"
+konto = "mcfcorpfin"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Carlsquare"
+system = "personio"
+konto = "carlsquare-gmbh"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Bachert & Partner"
+system = "personio"
+konto = "bachert-partner-1"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Crossgate"
+system = "personio"
+konto = "ccf"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Pava Partners"
+system = "personio"
+konto = "pava-partners"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Rautenberg & Co."
+system = "personio"
+konto = "rautenbergco"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "PGIM Private Credit"
+system = "workday"
+host = "pru.wd5.myworkdayjobs.com"
+mandant = "pru"
+seiten = ["pgim_careers"]
+suche = ["Frankfurt"]
+bereiche = ["Debt Advisory"]
+
+
+# --------------------------------------------------------------
+#  Restrukturierung und Turnaround
+# --------------------------------------------------------------
+
+[[firma]]
+name = "FalkenSteg"
+system = "personio"
+konto = "falkensteg-gmbh"
+
+[[firma]]
+name = "Concentro Management"
+system = "personio"
+konto = "concentro-management-ag-1"
+bereiche = ["Restrukturierung"]
+
+[[firma]]
+name = "Haselhorst Associates"
+system = "personio"
+konto = "haselhorst"
+bereiche = ["Restrukturierung"]
+
+
+# --------------------------------------------------------------
+#  Private Equity und Beteiligungen
+# --------------------------------------------------------------
+
+[[firma]]
+name = "HQ Capital"
+sitz = "Bad Homburg"
+system = "personio"
+konto = "hq-capital-deutschland-gmbh"
+bereiche = ["Private Equity"]
+
+[[firma]]
+name = "Prime Capital"
+sitz = "Frankfurt am Main"
+system = "personio"
+konto = "primecapital-ag"
+bereiche = ["Private Equity"]
+
+[[firma]]
+name = "HYSTAKE"
+system = "personio"
+konto = "hystake"
+bereiche = ["Private Equity"]
+
+[[firma]]
+name = "Afinum"
+system = "personio"
+konto = "afinum-management-gmbh"
+bereiche = ["Private Equity"]

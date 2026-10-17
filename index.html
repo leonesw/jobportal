@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stellenradar</title>
-<meta name="description" content="Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&amp;A und Restrukturierung – stündlich aktualisiert.">
+<meta name="description" content="Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&amp;A, Restrukturierung und Private Equity – stündlich aktualisiert.">
 <meta name="robots" content="noindex">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23F2F5F0'/%3E%3Cpath d='M7 17.5c2.6 1.6 4.4 3.6 5.6 6.2C15.4 15.8 19.6 10 26 6.5' fill='none' stroke='%23B8322A' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
@@ -201,6 +201,10 @@
   }
   .marken span.art { background: transparent; border: 1px solid var(--linie-stark); padding: 1px 7px; }
   .marken span.stufe { background: transparent; border: 1px solid var(--tinte-2); padding: 1px 7px; font-weight: 600; }
+  .marken span.quelle {
+    background: transparent; color: var(--gruenstift); border: 1px solid var(--gruenstift);
+    padding: 1px 7px; font-weight: 600; cursor: help;
+  }
   .firma .weitere { color: var(--tinte-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
   .marken a { font-size: 13px; margin-left: 4px; text-underline-offset: 2px; }
 
@@ -291,7 +295,7 @@
       <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 17.5c2.8 1.7 4.8 3.9 6.1 6.7C14.6 15 19.6 8.6 27.5 4.6" fill="none" stroke="var(--rotstift)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Stellenradar
     </h1>
-    <p class="unterzeile" id="unterzeile">Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&amp;A und Restrukturierung.</p>
+    <p class="unterzeile" id="unterzeile">Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&amp;A, Restrukturierung und Private Equity.</p>
   </div>
   <p class="stand" id="stand">Stellen werden geladen …</p>
 </header>
@@ -312,6 +316,7 @@
     <fieldset id="gruppe-stufen"><legend>Karrierestufe</legend></fieldset>
     <fieldset id="gruppe-bereiche"><legend>Bereich</legend></fieldset>
     <fieldset id="gruppe-regionen"><legend>Region</legend></fieldset>
+    <fieldset id="gruppe-quellen"><legend>Quelle</legend></fieldset>
     <fieldset id="gruppe-liste"><legend>Meine Liste</legend>
       <label class="option"><input type="checkbox" id="nur-gemerkt"><span>Nur gemerkte</span><span class="zahl" id="zahl-gemerkt"></span></label>
       <label class="option"><input type="checkbox" id="zeige-ausgeblendet"><span>Ausgeblendete zeigen</span><span class="zahl" id="zahl-ausgeblendet"></span></label>
@@ -341,7 +346,7 @@
 </div>
 
 <footer class="fuss"><div class="fuss-innen">
-  <p>Quelle: Jobsuche der Bundesagentur für Arbeit. Die Liste wird jede Stunde automatisch aktualisiert.</p>
+  <p id="fuss-quellen">Quellen: Jobsuche der Bundesagentur für Arbeit und die Karriereseiten ausgewählter Firmen (Liste in firmen.toml). Die Liste wird jede Stunde automatisch aktualisiert.</p>
   <p>Mit dem Haken merkst du dir eine Stelle, mit dem Kreuz blendest du sie aus. Beides wird nur in diesem Browser gespeichert, auf dem Handy also getrennt vom Laptop.</p>
 </div></footer>
 
@@ -361,8 +366,10 @@
     ["7t", "Letzte 7 Tage", 7],
     ["30t", "Letzte 30 Tage", 30],
   ];
-  const STANDARD = { zeitraum: "alle", arten: ["Vollzeit"], stufen: [], bereiche: [], regionen: [], sortierung: "neu" };
-  const GRUPPEN = ["arten", "stufen", "bereiche", "regionen"];
+  const STANDARD = { zeitraum: "alle", arten: ["Vollzeit"], stufen: [], bereiche: [], regionen: [], quellen: [], sortierung: "neu" };
+  const GRUPPEN = ["arten", "stufen", "bereiche", "regionen", "quellen"];
+  const KARRIERESEITE = "Karriereseite";
+  const QUELLEN = [KARRIERESEITE, "Arbeitsagentur"];
   const OHNE_STUFE = "Ohne Angabe";
   const STUFEN = ["Berufseinstieg", "Senior", "Manager", "Director & Partner", OHNE_STUFE];
   const STUFEN_HINWEISE = {
@@ -384,7 +391,7 @@
       localStorage.setItem(SPEICHERNAME, JSON.stringify({
         filter: {
           zeitraum: zustand.zeitraum, arten: [...zustand.arten], stufen: [...zustand.stufen], bereiche: [...zustand.bereiche],
-          regionen: [...zustand.regionen], sortierung: zustand.sortierung,
+          regionen: [...zustand.regionen], quellen: [...zustand.quellen], sortierung: zustand.sortierung,
         },
         gemerkt: [...gemerkt], ausgeblendet: [...ausgeblendet], zuletzt: besuchJetzt,
       }));
@@ -398,7 +405,7 @@
   const zustand = {
     suche: "", sucheWorte: [],
     zeitraum: f.zeitraum, arten: new Set(f.arten), stufen: new Set(f.stufen), bereiche: new Set(f.bereiche),
-    regionen: new Set(f.regionen), sortierung: f.sortierung,
+    regionen: new Set(f.regionen), quellen: new Set(f.quellen), sortierung: f.sortierung,
     nurGemerkt: false, zeigeAusgeblendet: false, sichtbar: SCHRITT,
   };
 
@@ -495,6 +502,8 @@
   let regionListe = [];
   let artListe = [];
   let stufenListe = [];
+  let quellenListe = [];
+  let firmenZahl = 0;
 
   function vorbereiten(roh) {
     const t = Date.parse(roh.gesehen) || Date.parse(roh.veroeffentlicht) || 0;
@@ -509,6 +518,7 @@
       arten: Array.isArray(roh.arten) ? roh.arten : [],
       stufen: Array.isArray(roh.stufen) && roh.stufen.length ? roh.stufen : [OHNE_STUFE],
       regionen: Array.isArray(roh.regionen) ? roh.regionen : [],
+      quellen: Array.isArray(roh.quellen) && roh.quellen.length ? roh.quellen : [roh.quelle || "Arbeitsagentur"],
       text: normalisiere(`${roh.titel} ${roh.firma} ${roh.ort} ${weitere.join(" ")} ${roh.plz || ""}`),
       neu: letzterBesuch > 0 && t > letzterBesuch,
     };
@@ -557,7 +567,11 @@
     baueGruppe("gruppe-stufen", "stufen", "checkbox", stufenListe.map((s) => [s, s, STUFEN_HINWEISE[s]]));
     baueGruppe("gruppe-bereiche", "bereiche", "checkbox", bereichListe.map((b) => [b, b]));
     baueGruppe("gruppe-regionen", "regionen", "checkbox", regionListe.map((r) => [r, r]));
+    baueGruppe("gruppe-quellen", "quellen", "checkbox", quellenListe.map((q) => q === KARRIERESEITE
+      ? [q, "Karriereseiten", firmenZahl ? `direkt von ${firmenZahl} Firmen abgefragt` : "direkt von den Firmen"]
+      : [q, q, "Jobsuche der Bundesagentur"]));
     $("gruppe-regionen").hidden = regionListe.length < 2;
+    $("gruppe-quellen").hidden = quellenListe.length < 2;
     $("gruppe-stufen").hidden = !stufenListe.length;
     $("sortierung").value = vergleich[zustand.sortierung] ? zustand.sortierung : "neu";
     setzeEingaben();
@@ -624,6 +638,13 @@
     for (const b of s.bereiche) marken.append(el("span", { text: b }));
     for (const x of s.stufen) if (x !== OHNE_STUFE) marken.append(el("span", { class: "stufe", text: x }));
     for (const a of s.arten) marken.append(el("span", { class: "art", text: a }));
+    if (s.quellen.includes(KARRIERESEITE)) {
+      const nurDort = !s.quellen.includes("Arbeitsagentur");
+      marken.append(el("span", {
+        class: "quelle", tabindex: "0", text: "Karriereseite",
+        title: nurDort ? "Direkt von der Karriereseite der Firma, nicht bei der Arbeitsagentur" : "Steht auch auf der Karriereseite der Firma",
+      }));
+    }
     if (extern) marken.append(el("a", { href: extern, target: "_blank", rel: "noopener", text: "Originalanzeige" }));
 
     const merken = el("button", {
@@ -685,7 +706,7 @@
 
   function alleZuruecksetzen() {
     Object.assign(zustand, {
-      zeitraum: "alle", arten: new Set(), stufen: new Set(), bereiche: new Set(), regionen: new Set(),
+      zeitraum: "alle", arten: new Set(), stufen: new Set(), bereiche: new Set(), regionen: new Set(), quellen: new Set(),
       nurGemerkt: false, zeigeAusgeblendet: false, suche: "", sucheWorte: [],
     });
     $("suche").value = "";
@@ -761,9 +782,16 @@
     const vorhandeneStufen = new Set(ausDaten("stufen"));
     stufenListe = (Array.isArray(daten.stufen) && daten.stufen.length ? daten.stufen : STUFEN)
       .filter((x) => x !== OHNE_STUFE || vorhandeneStufen.has(x));
+    const vorhandeneQuellen = new Set(ausDaten("quellen"));
+    quellenListe = QUELLEN.filter((q) => vorhandeneQuellen.has(q));
+    const firmenQuelle = (daten.quellen || {}).Karriereseiten || {};
+    firmenZahl = Number(firmenQuelle.firmen) || 0;
+    if (firmenZahl) {
+      $("fuss-quellen").textContent = `Quellen: Jobsuche der Bundesagentur für Arbeit und die Karriereseiten von ${firmenZahl} Firmen (Liste in firmen.toml). Die Liste wird jede Stunde automatisch aktualisiert.`;
+    }
 
     // Gespeicherte Auswahl nur übernehmen, wenn es die Werte noch gibt
-    const listen = { arten: artListe, stufen: stufenListe, bereiche: bereichListe, regionen: regionListe };
+    const listen = { arten: artListe, stufen: stufenListe, bereiche: bereichListe, regionen: regionListe, quellen: quellenListe };
     for (const g of GRUPPEN) {
       zustand[g] = new Set([...zustand[g]].filter((w) => listen[g].includes(w)));
     }
@@ -778,11 +806,11 @@
     }
     if (!ZEITRAEUME.some((z) => z[0] === zustand.zeitraum)) zustand.zeitraum = "alle";
 
-    if (regionListe.length) {
-      const regionen = regionListe.length > 1
-        ? regionListe.slice(0, -1).join(", ") + " und " + regionListe[regionListe.length - 1]
-        : regionListe[0];
-      $("unterzeile").textContent = `Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&A und Restrukturierung in ${regionen}.`;
+    const orte = regionListe.filter((r) => !/remote|bundesweit/i.test(r));
+    if (orte.length) {
+      const regionen = orte.length > 1 ? orte.slice(0, -1).join(", ") + " und " + orte[orte.length - 1] : orte[0];
+      $("unterzeile").textContent = "Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&A, Restrukturierung " +
+        `und Private Equity in ${regionen}${orte.length < regionListe.length ? ", dazu Remote-Stellen" : ""}.`;
     }
 
     const stand = standText(daten.stand);
@@ -800,6 +828,8 @@
       zeigeHinweis(`Beim letzten Abruf sind ${quelle.fehlgeschlagen} von ${quelle.abfragen} Suchen fehlgeschlagen. Einzelne neue Stellen können fehlen; der nächste Lauf holt sie nach.`);
     } else if (alter > 3 * 3600e3) {
       zeigeHinweis("Die Daten sind älter als drei Stunden. Prüfe bei GitHub unter „Actions“, ob der Ablauf „Stellen sammeln“ noch läuft.");
+    } else if (firmenQuelle.status === "fehler") {
+      zeigeHinweis("Die Karriereseiten der Firmen waren beim letzten Abruf nicht erreichbar. Ihre bisherigen Stellen bleiben sichtbar; der nächste Lauf versucht es erneut.");
     }
 
     baueFilter();

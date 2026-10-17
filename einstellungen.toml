@@ -21,7 +21,9 @@ ohne_zeitarbeit = true
 
 
 # --------------------------------------------------------------
-#  Regionen: Ort und Umkreis in Kilometern.
+#  Regionen: Ort und Umkreis in Kilometern (für die Suche bei
+#  der Arbeitsagentur) und die Orte, die zur Region zählen
+#  (für die Stellen von Firmen-Karriereseiten).
 #  Für eine weitere Region einfach einen Block kopieren.
 # --------------------------------------------------------------
 
@@ -29,11 +31,41 @@ ohne_zeitarbeit = true
 name = "Rhein-Neckar"
 ort = "Mannheim"
 umkreis_km = 30
+orte = [
+  "Mannheim", "Ludwigshafen", "Heidelberg", "Weinheim", "Viernheim",
+  "Schwetzingen", "Hockenheim", "Walldorf", "Wiesloch", "Leimen",
+  "Ladenburg", "Schriesheim", "Dossenheim", "Eppelheim", "Speyer",
+  "Frankenthal", "Worms", "Neustadt an der Weinstraße", "Bad Dürkheim",
+  "Haßloch", "Schifferstadt", "Limburgerhof", "Maxdorf", "Lampertheim",
+  "Bensheim", "Heppenheim", "Hemsbach", "Sinsheim", "Neckargemünd",
+  "Rhein-Neckar",
+]
 
 [[region]]
 name = "Frankfurt/Rhein-Main"
 ort = "Frankfurt am Main"
 umkreis_km = 30
+orte = [
+  "Frankfurt", "Eschborn", "Offenbach", "Bad Homburg", "Oberursel",
+  "Kronberg", "Königstein", "Bad Soden", "Sulzbach", "Schwalbach",
+  "Kelkheim", "Hofheim", "Hattersheim", "Kriftel", "Neu-Isenburg",
+  "Dreieich", "Langen", "Mörfelden-Walldorf", "Mörfelden", "Rüsselsheim", "Raunheim",
+  "Kelsterbach", "Flörsheim", "Hochheim", "Wiesbaden", "Mainz",
+  "Darmstadt", "Hanau", "Maintal", "Bad Vilbel", "Friedberg",
+  "Rodgau", "Dietzenbach", "Heusenstamm", "Mühlheim am Main",
+  "Weiterstadt", "Idstein", "Friedrichsdorf", "Steinbach", "Rhein-Main",
+]
+
+
+# --------------------------------------------------------------
+#  Firmen-Karriereseiten (die Firmen stehen in firmen.toml)
+# --------------------------------------------------------------
+
+[firmen]
+# Stellen ohne festen Ort (Remote, bundesweit) mit aufnehmen?
+remote_einbeziehen = true
+# Name der Region, unter der solche Stellen erscheinen
+remote_region = "Bundesweit / Remote"
 
 
 # --------------------------------------------------------------
@@ -147,4 +179,12 @@ woerter = [
   # Hotel-Nachtdienst ("Night Audit"), Anwaltsberufe, Sekretariat
   "night audit", "rechtsanwalt", "rechtsanwält", "jurist",
   "partnerassist", "teamassist", "assistenz", "sekretär",
+  # Sammelanzeigen ohne konkrete Stelle, IT-Vertrieb
+  "initiativbewerbung", "initiativ bewerbung", "unsolicited",
+  "general application", "talentpool", "talent pool", "deal maker",
 ]
+
+# Berufe, die die Arbeitsagentur einer Anzeige zuordnet und die
+# immer aussortiert werden (z. B. Kanzlei-Stellen mit Titeln wie
+# "Senior Associate M&A", die eigentlich Anwaltsstellen sind).
+berufe = ["rechtsanwalt", "rechtsanwält", "jurist", "notar"]

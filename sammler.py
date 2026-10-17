@@ -7,17 +7,19 @@ Läuft automatisch jede Stunde über GitHub Actions und
 
   1. fragt die Jobsuche der Bundesagentur für Arbeit ab, und zwar für jeden
      Suchbegriff, jede Region und jede Anstellungsart aus einstellungen.toml,
-  2. behält nur Stellen, deren Titel zu einem deiner Bereiche passt,
-  3. erkennt aus dem Titel die Karrierestufe (Berufseinstieg, Senior, Manager …),
-  4. entfernt Dubletten und merkt sich, wann eine Stelle zum ersten Mal
+  2. fragt die Karriereseiten der Firmen aus firmen.toml ab,
+  3. behält nur Stellen, die zu deinen Bereichen und Regionen passen,
+  4. erkennt aus dem Titel die Karrierestufe (Berufseinstieg, Senior, Manager …),
+  5. entfernt Dubletten und merkt sich, wann eine Stelle zum ersten Mal
      aufgetaucht ist (daraus entsteht die Sortierung "neueste zuerst"),
-  5. speichert alles in jobs.json, die von der Webseite angezeigt wird.
+  6. speichert alles in jobs.json, die von der Webseite angezeigt wird.
 
 Benötigt nur Python 3.11 oder neuer, keine Zusatzpakete.
 """
 
 from __future__ import annotations
 
+import email.utils
 import hashlib
 import json
 import os
@@ -28,6 +30,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -41,11 +44,15 @@ except Exception:  # Zeitzonendaten fehlen: dann eben UTC
 
 ORDNER = Path(__file__).resolve().parent
 EINSTELLUNGEN = ORDNER / "einstellungen.toml"
+FIRMENLISTE = ORDNER / "firmen.toml"
 DATENDATEI = ORDNER / "jobs.json"
+
+QUELLE_BA = "Arbeitsagentur"
+QUELLE_FIRMA = "Karriereseite"
 
 # --- Bundesagentur für Arbeit ------------------------------------------------
 
-BA_NAME = "Arbeitsagentur"
+BA_NAME = QUELLE_BA
 BA_BASIS = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service"
 # Die BA hat mehrere Versionen der Suche. Die erste, die antwortet, wird benutzt.
 BA_ENDPUNKTE = ["/pc/v6/jobs", "/pc/v4/app/jobs", "/pc/v4/jobs"]
@@ -53,7 +60,11 @@ BA_DETAILSEITE = "https://www.arbeitsagentur.de/jobsuche/jobdetail/{refnr}"
 BA_HEADER = {
     "X-API-Key": "jobboerse-jobsuche",  # öffentlicher Schlüssel der BA-Jobsuche
     "Accept": "application/json",
-    "User-Agent": "Stellenradar/1.1 (privates Bewerbungsportal)",
+    "User-Agent": "Stellenradar/1.3 (privates Bewerbungsportal)",
+}
+WEB_HEADER = {
+    "User-Agent": "Mozilla/5.0 (compatible; Stellenradar/1.3; privates Bewerbungsportal)",
+    "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
 }
 
 # Jede Suche läuft dreimal: einmal je Anstellungsart. Daran erkennen wir,
@@ -69,10 +80,10 @@ PAUSE_SEKUNDEN = 0.25
 
 # Diese Wörter im Titel legen die Anstellungsart genauer fest.
 ART_MUSTER = {
-    "Werkstudent": ["werkstudent", "working student", "studentische"],
-    "Abschlussarbeit": ["abschlussarbeit", "masterarbeit", "bachelorarbeit", "thesis"],
-    "Trainee": ["trainee", "graduate program", "absolventenprogramm"],
-    "Praktikum": ["praktikum", "praktikant", "internship"],
+    "Werkstudent": re.compile(r"werkstudent|working student|studentische"),
+    "Abschlussarbeit": re.compile(r"abschlussarbeit|masterarbeit|bachelorarbeit|thesis"),
+    "Trainee": re.compile(r"trainee|graduate program|absolventenprogramm"),
+    "Praktikum": re.compile(r"praktikum|praktikant|internship|\bintern\b|summer analyst|off cycle"),
 }
 
 # --- Karrierestufen --------------------------------------------------------------
@@ -89,8 +100,8 @@ STUFEN_REGELN = [
     # Eindeutige Hinweise auf den Einstieg haben Vorrang ("Junior Manager" = Einstieg)
     ("Berufseinstieg", r"\b(?:junior|jr)\b|berufseinst|einsteiger|berufsanfaeng|absolvent|"
                        r"\bgraduate|young professional|entry level|trainee|werkstudent|"
-                       r"working student|praktik|internship|pruefungsassist|revisionsassist|"
-                       r"berufsbegleitend"),
+                       r"working student|praktik|internship|\bintern\b|pruefungsassist|"
+                       r"revisionsassist|berufsbegleitend"),
     # Sonderfälle vor "Manager": Assistant Manager, Prüfungsleiter, fachliche Manager-Titel
     ("Senior", r"assistant manager|pruefungsleit|\b(?:investment|portfolio|fund|asset|"
                r"business development|account|relationship|risk|product|projekt|project|"
@@ -113,10 +124,42 @@ _JUNIOR_SENIOR = re.compile(r"\b(?:junior|jr)\.?\s*/\s*(?:senior|sr|snr)\b\.?|"
                             r"\b(?:senior|sr|snr)\.?\s*/\s*(?:junior|jr)\b\.?")
 _TITELTEILE = re.compile(r"\s*[/|,;]\s*|\s+[-–—]\s+|\s+(?:oder|bzw\.?|or)\s+")
 
+# Stufen-Angaben der Bewerbersysteme ("experienced", "Senior Associate", "Berufseinstieg" …).
+# Sie zählen nur, wenn der Titel selbst keine Stufe erkennen lässt.
+_SYSTEM_STUFEN = [
+    ("Berufseinstieg", re.compile(r"\bintern\b|internship|praktik|student|studierend|schueler|trainee|"
+                                  r"apprentice|ausbildung|entry|einstieg|einsteig|absolvent|graduate|"
+                                  r"junior|young professional")),
+    ("Manager", re.compile(r"(?:associate|assistant) director|manager")),
+    ("Director & Partner", re.compile(r"director|partner|executive|principal|\bhead\b")),
+    ("Senior", re.compile(r"senior|specialist|experienced|berufserfahren|professional|expert")),
+    ("Berufseinstieg", re.compile(r"associate|analyst|consultant")),
+]
+
+
+def stufe_aus_system(text) -> str | None:
+    t = normalisiere(str(text or ""))
+    return next((stufe for stufe, muster in _SYSTEM_STUFEN if t and muster.search(t)), None)
+
+
+# Bei Firmen mit Standard-Bereich: Stellen dieser Art zählen trotzdem nicht
+FACHFREMD = re.compile(
+    r"office manag|office assist|back ?office|assistenz|executive assistant|personal assistant|"
+    r"team assistant|assistant to|assistent(?:in)? der|empfang|rezeption|marketing|kommunikation|"
+    r"communication|recruit|talent|human resources|\bhr\b|people|personal|\bit\b|informatik|"
+    r"software|developer|entwickler|engineer|\bdata\b|buchhalt|accountant|controll|steuer|\btax\b|"
+    r"lohn|sachbearbeit|kaufm|kauffrau|ausbildung|azubi|auszubild|legal|jurist|recht|sekretaer|"
+    r"\bevent|design|sales|vertrieb|facility|hausmeister|fahrer|administrat|investor relations|"
+    r"fund admin")
+
+REMOTE_WOERTER = re.compile(
+    r"\b(?:remote|homeoffice|home office|mobiles arbeiten|mobile office|deutschlandweit|"
+    r"bundesweit|germany|deutschland|deu|de|allemagne|flexibel|flexible|hybrid|und|and)\b")
+
 # Geschlechtsangaben wie (m/w/d) werden aus dem Titel entfernt.
 GENDER_MUSTER = re.compile(
     r"\(\s*(?:[mwfdxi]\s*[/|,]?\s*){2,4}\)"
-    r"|\(\s*(?:all genders|alle geschlechter|gn\*?|m/w/d|w/m/d)\s*\)"
+    r"|\(\s*(?:all genders|alle geschlechter|gn\*?|m/w/d|w/m/d|m/w/div\.?|mensch)\s*\)"
     r"|\b(?:m|w|d)\s*/\s*(?:m|w|d)\s*/\s*(?:m|w|d|x)\b",
     re.IGNORECASE,
 )
@@ -199,6 +242,22 @@ def als_datum(wert) -> date | None:
             return date(int(treffer[3]), int(treffer[2]), int(treffer[1]))
         except ValueError:
             return None
+    try:  # RSS: "Thu, 15 Oct 2026 11:46:23 Z"
+        return email.utils.parsedate_to_datetime(text).date()
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def datum_aus_relativ(text: str, heute: date) -> date | None:
+    """Workday: "Posted 3 Days Ago", "Vor 26 Tagen ausgeschrieben", "Gestern" …"""
+    t = (text or "").lower()
+    if "heute" in t or "today" in t:
+        return heute
+    if "gestern" in t or "yesterday" in t:
+        return heute - timedelta(days=1)
+    treffer = re.search(r"(\d+)\+?\s*(?:tag|day)", t)
+    if treffer:
+        return heute - timedelta(days=int(treffer[1]))
     return None
 
 
@@ -209,8 +268,34 @@ def als_zahl(wert, ersatz: int = 0) -> int:
         return ersatz
 
 
-def kurz_id(text: str) -> str:
-    return "ba-" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+def kurz_id(text: str, praefix: str = "ba-") -> str:
+    return praefix + hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+
+
+def abrufen(url: str, methode: str = "GET", daten=None, kopf: dict | None = None,
+            art: str = "json", versuche: int = 3):
+    """Lädt eine Adresse; wiederholt bei vorübergehenden Fehlern."""
+    header = {**WEB_HEADER, **(kopf or {})}
+    rumpf = None
+    if daten is not None:
+        rumpf = json.dumps(daten).encode("utf-8")
+        header.setdefault("Content-Type", "application/json")
+    if art == "json":
+        header.setdefault("Accept", "application/json")
+    anfrage = urllib.request.Request(url, data=rumpf, headers=header, method=methode)
+    for versuch in range(1, versuche + 1):
+        try:
+            with urllib.request.urlopen(anfrage, timeout=30) as antwort:
+                inhalt = antwort.read()
+            text = inhalt.decode("utf-8", errors="replace")
+            return json.loads(text) if art == "json" else text
+        except urllib.error.HTTPError as fehler:
+            if fehler.code not in (429, 500, 502, 503, 504) or versuch == versuche:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError):
+            if versuch == versuche:
+                raise
+        time.sleep(2 * versuch)
 
 
 # --- Einstellungen und alte Daten ----------------------------------------------
@@ -221,14 +306,15 @@ def lade_einstellungen() -> dict:
         roh = tomllib.load(f)
 
     allgemein = roh.get("allgemein", {})
-    regionen = [
-        {
+    regionen = []
+    for r in roh.get("region", []):
+        orte = [str(o) for o in r.get("orte", [])] or [str(r["ort"])]
+        regionen.append({
             "name": str(r["name"]),
             "ort": str(r["ort"]),
             "umkreis": int(r.get("umkreis_km", 25)),
-        }
-        for r in roh.get("region", [])
-    ]
+            "orte_norm": [normalisiere(o) for o in orte if normalisiere(o)],
+        })
     begriffe = [str(b) for b in roh.get("suche", {}).get("begriffe", []) if str(b).strip()]
 
     # Je Bereich die Stichwörter normalisieren, längste zuerst prüfen.
@@ -237,10 +323,18 @@ def lade_einstellungen() -> dict:
         norm = sorted({normalisiere(w) for w in woerter if normalisiere(w)}, key=len, reverse=True)
         bereiche.append((name, norm))
 
-    ausschluss = [normalisiere(w) for w in roh.get("ausschluss", {}).get("woerter", [])]
+    ausschluss_roh = roh.get("ausschluss", {})
+    ausschluss = [normalisiere(w) for w in ausschluss_roh.get("woerter", [])]
+    berufe = [normalisiere(w) for w in ausschluss_roh.get("berufe", [])]
+    firmen_cfg = roh.get("firmen", {})
 
     if not regionen or not begriffe or not bereiche:
         sys.exit("einstellungen.toml braucht mindestens eine Region, einen Suchbegriff und einen Bereich.")
+
+    firmen = []
+    if FIRMENLISTE.exists():
+        with FIRMENLISTE.open("rb") as f:
+            firmen = [x for x in tomllib.load(f).get("firma", []) if x.get("name") and x.get("system")]
 
     return {
         "max_alter": max(1, min(100, int(allgemein.get("max_alter_tage", 60)))),
@@ -250,6 +344,10 @@ def lade_einstellungen() -> dict:
         "begriffe": begriffe,
         "bereiche": bereiche,
         "ausschluss": [w for w in ausschluss if w],
+        "ausschluss_berufe": [w for w in berufe if w],
+        "remote": bool(firmen_cfg.get("remote_einbeziehen", True)),
+        "remote_region": str(firmen_cfg.get("remote_region", "Bundesweit / Remote")),
+        "firmen": firmen,
     }
 
 
@@ -278,22 +376,42 @@ def finde_bereiche(text: str, bereiche: list) -> list[str]:
     return treffer
 
 
+def arten_aus_text(text: str) -> set[str]:
+    """Anstellungsart aus Angaben der Bewerbersysteme ("Vollzeit / Teilzeit", "internship" …)."""
+    t = normalisiere(text)
+    arten = set()
+    if re.search(r"vollzeit|full ?time|\bfull\b", t):
+        arten.add("Vollzeit")
+    if re.search(r"teilzeit|part ?time|\bpart\b", t):
+        arten.add("Teilzeit")
+    if re.search(r"praktik|\bintern\b|internship", t):
+        arten.add("Praktikum")
+    if re.search(r"werkstud|working student|studentjob", t):
+        arten.add("Werkstudent")
+    if re.search(r"trainee", t):
+        arten.add("Trainee")
+    return arten
+
+
 def bestimme_arten(arten: set[str], titel_norm: str) -> list[str]:
     def hat(art: str) -> bool:
-        return any(normalisiere(m) in titel_norm for m in ART_MUSTER[art])
+        return bool(ART_MUSTER[art].search(titel_norm))
 
+    # Der Titel hat Vorrang vor den Angaben der Bewerbersysteme
     if hat("Werkstudent"):
         return ["Werkstudent"]
     if hat("Abschlussarbeit"):
         return ["Abschlussarbeit"]
     if hat("Praktikum"):
         return ["Praktikum"]
+    if "Werkstudent" in arten:
+        return ["Werkstudent"]
     ergebnis = set(arten)
     if hat("Trainee"):
         ergebnis.discard("Praktikum")
         ergebnis.add("Trainee")
     reihenfolge = ["Vollzeit", "Teilzeit", "Trainee", "Praktikum"]
-    return [a for a in reihenfolge if a in ergebnis]
+    return [a for a in reihenfolge if a in ergebnis] or ["Vollzeit"]
 
 
 def bestimme_stufen(titel: str, arten: list[str]) -> list[str]:
@@ -331,6 +449,40 @@ def bestimme_stufen(titel: str, arten: list[str]) -> list[str]:
     return [s for s in STUFEN if s in stufen] or [OHNE_STUFE]
 
 
+def ordne_regionen(orte: list[str], cfg: dict) -> tuple[list[str], str, list[str]]:
+    """Welche Regionen passen zu den Orten? Liefert (Regionen, angezeigter Ort, weitere Orte)."""
+    regionen, passende, andere = set(), [], []
+    for ort in orte:
+        text = f" {normalisiere(ort)} "
+        if " frankfurt " in text and " oder " in text:  # Frankfurt (Oder)
+            andere.append(ort)
+            continue
+        funde = [(r["name"], o) for r in cfg["regionen"] for o in r["orte_norm"] if f" {o} " in text]
+        # Der längere Ortsname gewinnt: "Mörfelden-Walldorf" ist nicht Walldorf (Baden)
+        treffer = {name for name, o in funde if not any(o != o2 and f" {o} " in f" {o2} " for _, o2 in funde)}
+        if treffer:
+            regionen |= treffer
+            passende.append(ort)
+        elif cfg["remote"] and not REMOTE_WOERTER.sub(" ", text).strip() and text.strip():
+            regionen.add(cfg["remote_region"])
+            passende.append(ort)
+        else:
+            andere.append(ort)
+    reihenfolge = [r["name"] for r in cfg["regionen"]] + [cfg["remote_region"]]
+    sichtbar = []
+    for ort in passende + andere:
+        ort = ort_anzeige(ort)
+        if ort and ort not in sichtbar:
+            sichtbar.append(ort)
+    return [r for r in reihenfolge if r in regionen], (sichtbar or [""])[0], sichtbar[1:21]
+
+
+def ort_anzeige(ort: str) -> str:
+    """"Frankfurt am Main, Germany" → "Frankfurt am Main" (nur für die Anzeige)."""
+    kurz = re.sub(r"[\s,]+(?:germany|deutschland|deu|de|allemagne)\s*$", "", ort.strip(), flags=re.I).strip(" ,")
+    return kurz or ort.strip()
+
+
 # --- Abruf bei der Arbeitsagentur ------------------------------------------------
 
 
@@ -356,7 +508,7 @@ def hole_json(url: str, parameter: dict, versuche: int = 4):
 def stellen_liste(antwort) -> list | None:
     if not isinstance(antwort, dict):
         return None
-    for schluessel in ("stellenangebote", "ergebnisse", "stellen", "jobs", "content"):
+    for schluessel in ("stellenangebote", "ergebnisliste", "ergebnisse", "stellen", "jobs", "content"):
         wert = antwort.get(schluessel)
         if isinstance(wert, list):
             return wert
@@ -370,7 +522,7 @@ def stellen_liste(antwort) -> list | None:
 def sieht_aus_wie_suchantwort(antwort) -> bool:
     if not isinstance(antwort, dict):
         return False
-    bekannte = {"stellenangebote", "maxErgebnisse", "facetten", "page", "size", "ergebnisse"}
+    bekannte = {"stellenangebote", "ergebnisliste", "maxErgebnisse", "facetten", "page", "size", "ergebnisse"}
     return bool(bekannte & set(antwort)) or stellen_liste(antwort) is not None
 
 
@@ -528,17 +680,17 @@ def verarbeite(roh, region, art, cfg, treffer, statistik, beispiele):
         statistik["unlesbar"] += 1
         return
     titel_norm = normalisiere(stelle["titel"])
+    beruf_norm = normalisiere(stelle["beruf"])
 
     # Die Ausschlussliste gilt für den Titel. Den von der BA zugeordneten Beruf
-    # prüfen wir nur, wenn der Titel allein keinen Bereich ergibt – die Zuordnung
-    # der BA ist oft ungenau (z. B. "Internal Auditor" als Qualitäts-Auditor).
-    if any(w in titel_norm for w in cfg["ausschluss"]):
+    # prüfen wir nur gegen die Berufe-Liste (z. B. Rechtsanwalt) – die Zuordnung
+    # der BA ist sonst oft ungenau (z. B. "Internal Auditor" als Qualitäts-Auditor).
+    if any(w in titel_norm for w in cfg["ausschluss"]) or any(w in beruf_norm for w in cfg["ausschluss_berufe"]):
         beispiele["ausgeschlossen"][stelle["titel"]] += 1
         return
 
     bereiche = finde_bereiche(titel_norm, cfg["bereiche"])
     if not bereiche and stelle["beruf"]:
-        beruf_norm = normalisiere(stelle["beruf"])
         if any(w in beruf_norm for w in cfg["ausschluss"]):
             beispiele["ausgeschlossen"][stelle["titel"]] += 1
             return
@@ -555,32 +707,22 @@ def verarbeite(roh, region, art, cfg, treffer, statistik, beispiele):
     eintrag["abfrage_arten"].add(art)
 
 
-# --- Zusammenführen und Speichern ------------------------------------------------
-
-
 def signatur(titel: str, firma: str, ort: str) -> str:
     return "|".join(normalisiere(x) for x in (titel, firma, ort))
 
 
-def fuehre_zusammen(treffer, alte_stellen, status, jetzt, heute, cfg):
-    """Neue Treffer mit dem letzten Stand verbinden; liefert (stellen, anzahl_neu)."""
-    erster_lauf = not alte_stellen
+def baue_ba_stellen(treffer, cfg, heute) -> dict[str, dict]:
+    """Rohtreffer der BA zu Stellen zusammenfassen (gleicher Titel, Firma, Ort = eine Stelle)."""
     region_reihenfolge = [r["name"] for r in cfg["regionen"]]
-
-    # Dieselbe Stelle mehrfach veröffentlicht (gleicher Titel, Firma, Ort)? Zusammenfassen.
     gruppen: dict[str, list[dict]] = {}
     for e in treffer.values():
         gruppen.setdefault(signatur(e["titel"], e["firma"], e["orte"][0] if e["orte"] else ""), []).append(e)
 
     stellen = {}
-    neu = 0
     for gruppe in gruppen.values():
         ids = sorted(kurz_id(e["refnr"]) for e in gruppe)
-        sid = next((i for i in ids if i in alte_stellen), ids[0])  # bekannte ID behalten
         neueste = max(gruppe, key=lambda e: e["datum"] or date.min)
         aelteste = min((e["datum"] for e in gruppe if e["datum"]), default=None)
-        datum = aelteste or heute
-
         regionen = set().union(*(e["regionen"] for e in gruppe))
         abfrage_arten = set().union(*(e["abfrage_arten"] for e in gruppe))
         orte = []
@@ -589,7 +731,7 @@ def fuehre_zusammen(treffer, alte_stellen, status, jetzt, heute, cfg):
         arten = bestimme_arten(abfrage_arten, normalisiere(neueste["titel"]))
 
         stelle = {
-            "id": sid,
+            "ids": ids,  # wird beim Zusammenführen durch die endgültige ID ersetzt
             "titel": neueste["titel"],
             "firma": neueste["firma"],
             "ort": orte[0] if orte else "",
@@ -598,50 +740,451 @@ def fuehre_zusammen(treffer, alte_stellen, status, jetzt, heute, cfg):
             "bereiche": neueste["bereiche"],
             "arten": arten,
             "stufen": bestimme_stufen(neueste["titel"], arten),
-            "veroeffentlicht": datum.isoformat(),
+            "veroeffentlicht": (aelteste or heute).isoformat(),
             "link": BA_DETAILSEITE.format(refnr=urllib.parse.quote(neueste["refnr"])),
-            "quelle": BA_NAME,
+            "quelle": QUELLE_BA,
+            "quellen": [QUELLE_BA],
+            "herkunft": "ba",
+            # Übergang von Version 1.0: alte ID aus Titel und Firma ohne Ort
+            "_v1_id": kurz_id(f"{normalisiere(neueste['titel'])}|{normalisiere(neueste['firma'])}|"),
         }
         if len(orte) > 1:
             stelle["weitere_orte"] = orte[1:6]
         extern = neueste["extern"] or next((e["extern"] for e in gruppe if e["extern"]), None)
         if extern:
             stelle["extern"] = extern
+        stellen[ids[0]] = stelle
+    return stellen
 
-        # Bisherigen Eintrag finden: über die ID oder (Übergang von Version 1.0)
-        # über die alte ID aus Titel und Firma ohne Ort.
-        alte_id = kurz_id(f"{normalisiere(neueste['titel'])}|{normalisiere(neueste['firma'])}|")
-        alt = alte_stellen.get(sid) or alte_stellen.get(alte_id)
-        frueher = set((alt or {}).get("alt", []))
-        if alte_id in alte_stellen and alte_id != sid:
-            frueher.add(alte_id)
+
+# --- Firmen-Karriereseiten -------------------------------------------------------
+
+
+def text_von(element, pfad: str) -> str:
+    gefunden = element.find(pfad)
+    return (gefunden.text or "").strip() if gefunden is not None and gefunden.text else ""
+
+
+def quelle_personio(firma: dict, heute: date) -> list[dict]:
+    konto = firma["konto"]
+    basis = f"https://{konto}.jobs.personio.{firma.get('domain', 'de')}"
+    xml = abrufen(f"{basis}/xml?language=de", art="text")
+    wurzel = ET.fromstring(xml.encode("utf-8"))
+    ergebnis = []
+    for pos in wurzel.iter("position"):
+        nummer = text_von(pos, "id")
+        titel = text_von(pos, "name")
+        if not nummer or not titel:
+            continue
+        orte = [text_von(pos, "office")] + [o.text.strip() for o in pos.findall("additionalOffices/office") if o.text]
+        # employmentType: permanent, intern, trainee, working_student …; schedule: full-time, part-time …
+        arten = arten_aus_text(f"{text_von(pos, 'employmentType')} {text_von(pos, 'schedule')}")
+        ergebnis.append({
+            "id": nummer,
+            "titel": titel,
+            "firma": text_von(pos, "subcompany") or firma["name"],
+            "orte": [o for o in orte if o],
+            "datum": als_datum(text_von(pos, "createdAt")),
+            "link": f"{basis}/job/{nummer}?language=de",
+            "hinweise": [text_von(pos, "department"), text_von(pos, "recruitingCategory")],
+            "arten": arten,
+            "stufe": stufe_aus_system(text_von(pos, "seniority")),
+        })
+    return ergebnis
+
+
+def quelle_recruitee(firma: dict, heute: date) -> list[dict]:
+    antwort = abrufen(f"https://{firma['konto']}.recruitee.com/api/offers/")
+    ergebnis = []
+    for o in antwort.get("offers", []):
+        orte = [l.get("city") for l in o.get("locations") or [] if l.get("city")] or [o.get("city") or o.get("location") or ""]
+        ergebnis.append({
+            "id": str(o.get("id")),
+            "titel": o.get("title") or "",
+            "firma": firma["name"],
+            "orte": [x for x in orte if x],
+            "datum": als_datum(o.get("published_at") or o.get("created_at")),
+            "link": o.get("careers_url") or o.get("url") or "",
+            "hinweise": [o.get("department") or ""],
+            "arten": arten_aus_text(o.get("employment_type_code") or ""),
+            "stufe": None,
+        })
+    return ergebnis
+
+
+def quelle_greenhouse(firma: dict, heute: date) -> list[dict]:
+    host = "boards-api.eu.greenhouse.io" if firma.get("eu") else "boards-api.greenhouse.io"
+    antwort = abrufen(f"https://{host}/v1/boards/{firma['konto']}/jobs")
+    return [{
+        "id": str(j.get("id")),
+        "titel": j.get("title") or "",
+        "firma": firma["name"],
+        "orte": [(j.get("location") or {}).get("name") or ""],
+        "datum": als_datum(j.get("first_published") or j.get("updated_at")),
+        "link": j.get("absolute_url") or "",
+        "hinweise": [],
+        "arten": set(),
+        "stufe": None,
+    } for j in antwort.get("jobs", [])]
+
+
+def quelle_workday(firma: dict, heute: date) -> list[dict]:
+    host, mandant = firma["host"], firma["mandant"]
+    gefunden: dict[str, dict] = {}
+    for seite in firma.get("seiten") or [firma.get("seite", "External")]:
+        for suchtext in firma.get("suche") or [""]:
+            offset, gesamt = 0, None
+            while offset < 400:
+                antwort = abrufen(f"https://{host}/wday/cxs/{mandant}/{seite}/jobs", methode="POST",
+                                  daten={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": suchtext})
+                posten = antwort.get("jobPostings") or []
+                if gesamt is None:
+                    gesamt = als_zahl(antwort.get("total"), 0)
+                for p in posten:
+                    pfad = p.get("externalPath") or ""
+                    ort = p.get("locationsText") or ""
+                    if not ort or re.match(r"^\d+\s", ort):  # "2 Locations" – Ort aus der Adresse lesen
+                        teile = pfad.split("/")
+                        ort = teile[2].replace("-", " ") if len(teile) > 2 else ""
+                    gefunden[pfad] = {
+                        "id": pfad,
+                        "titel": p.get("title") or "",
+                        "firma": firma["name"],
+                        "orte": [ort] if ort else [],
+                        "datum": datum_aus_relativ(p.get("postedOn") or "", heute),
+                        "link": f"https://{host}/{seite}{pfad}",
+                        "hinweise": [],
+                        "arten": set(),
+                        "stufe": None,
+                    }
+                offset += 20
+                time.sleep(PAUSE_SEKUNDEN)
+                if len(posten) < 20 or (gesamt and offset >= gesamt):
+                    break
+    return list(gefunden.values())
+
+
+def quelle_phenom(firma: dict, heute: date) -> list[dict]:
+    basis = firma["basis"].rstrip("/")
+    kopf = {"Origin": basis, "Referer": f"{basis}/de/de/search-results"}
+    ergebnis, start, gesamt = [], 0, None
+    for _ in range(60):  # höchstens 60 Seiten
+        anfrage = {
+            "lang": firma.get("sprache", "de_de"), "deviceType": "desktop", "country": firma.get("land", "de"),
+            "pageName": "search-results", "ddoKey": "refineSearch", "sortBy": "", "subsearch": "",
+            "from": start, "jobs": True, "counts": False, "all_fields": ["category", "city", "grade", "type"],
+            "size": 100, "clearAll": False, "jdsource": "facets", "isSliderEnable": False,
+            "keywords": "", "global": True, "selected_fields": {}, "locationData": {},
+        }
+        antwort = abrufen(f"{basis}/widgets", methode="POST", daten=anfrage, kopf=kopf)
+        suche = antwort.get("refineSearch") or {}
+        stellen = (suche.get("data") or {}).get("jobs") or []
+        if gesamt is None:
+            gesamt = als_zahl(suche.get("totalHits"), 0)
+        for j in stellen:
+            orte = [re.sub(r",\s*[A-Z]{3}$", "", o).strip() for o in j.get("multi_location") or []] or [j.get("city") or ""]
+            nummer = str(j.get("reqId") or j.get("jobId") or j.get("jobSeqNo") or "")
+            ergebnis.append({
+                "id": str(j.get("jobSeqNo") or nummer),
+                "titel": j.get("title") or "",
+                "firma": firma["name"],
+                "orte": [o for o in orte if o],
+                "datum": als_datum(j.get("postedDate") or j.get("dateCreated")),
+                "link": j.get("jobUrl") or f"{basis}{firma.get('jobpfad', '/job/')}{nummer}",
+                "hinweise": [j.get("category") or ""] + list(j.get("multi_category") or []),
+                "arten": arten_aus_text(j.get("type") or ""),
+                "stufe": stufe_aus_system(j.get("grade")),
+            })
+        start += len(stellen)  # falls der Server weniger als 100 je Seite liefert
+        time.sleep(PAUSE_SEKUNDEN)
+        if not stellen or (gesamt and start >= gesamt):
+            break
+    return ergebnis
+
+
+def quelle_rss(firma: dict, heute: date) -> list[dict]:
+    ergebnis = []
+    for feed in firma.get("feeds", []):
+        url, ort = (feed.get("url"), feed.get("ort", "")) if isinstance(feed, dict) else (feed, "")
+        wurzel = ET.fromstring(abrufen(url, art="text").encode("utf-8"))
+        for item in wurzel.iter("item"):
+            titel = re.sub(r"^\s*\d{4}-\d+\s*-\s*", "", text_von(item, "title"))  # "2025-788 - …"
+            link = text_von(item, "link")
+            kategorie = " ".join((c.text or "") for c in item.findall("category"))
+            ergebnis.append({
+                "id": link or titel,
+                "titel": titel,
+                "firma": firma["name"],
+                "orte": [ort] if ort else [],
+                "datum": als_datum(text_von(item, "pubDate")),
+                "link": link,
+                "hinweise": [kategorie],
+                "arten": arten_aus_text(kategorie),
+                "stufe": None,
+            })
+    return ergebnis
+
+
+def quelle_nextjs(firma: dict, heute: date) -> list[dict]:
+    html = abrufen(firma["url"], art="text")
+    treffer = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not treffer:
+        raise ValueError("Keine eingebetteten Seitendaten (__NEXT_DATA__) gefunden")
+    daten = json.loads(treffer.group(1))
+    stellen = ((daten.get("props") or {}).get("pageProps") or {}).get("jobs") or []
+    basis = re.match(r"https?://[^/]+", firma["url"]).group(0)
+    ergebnis = []
+    for j in stellen:
+        orte = j.get("displayedCities") or [suche_tief(c, ("name", "title", "city")) for c in j.get("cities") or []]
+        if not orte and j.get("city"):
+            orte = [suche_tief(j["city"], ("name", "title", "city")) or str(j["city"])]
+        stufen = [stufe_aus_system(suche_tief(x, ("name", "title", "label")) if isinstance(x, dict) else x)
+                  for x in j.get("careerLevels") or []]
+        link = j.get("applyUrl") or (f"{basis}/job/{j['jobId']}" if j.get("jobId") else firma["url"])
+        ergebnis.append({
+            "id": link,
+            "titel": j.get("title") or "",
+            "firma": firma["name"],
+            "orte": [str(o) for o in orte if o],
+            "datum": als_datum(j.get("publishedAt") or j.get("jobCreatedAt") or j.get("createdAt")),
+            "link": link,
+            "hinweise": [str(j.get("department") or "")],
+            "arten": arten_aus_text(j.get("positionType") or ""),
+            "stufe": next((s for s in stufen if s), None),
+        })
+    return ergebnis
+
+
+QUELLEN = {
+    "personio": quelle_personio,
+    "recruitee": quelle_recruitee,
+    "greenhouse": quelle_greenhouse,
+    "workday": quelle_workday,
+    "phenom": quelle_phenom,
+    "rss": quelle_rss,
+    "nextjs": quelle_nextjs,
+}
+
+
+def herkunft_von(firma: dict) -> str:
+    return f"{firma['system']}:{firma.get('konto') or firma.get('mandant') or normalisiere(firma['name']).replace(' ', '-')}"
+
+
+def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter) -> dict | None:
+    """Wendet Ausschlussliste, Bereiche, Regionen und Stufen auf eine Firmen-Stelle an."""
+    titel = bereinige_titel(e["titel"])
+    titel_norm = normalisiere(titel)
+    if not titel or not e.get("link"):
+        zaehler["unlesbar"] += 1
+        return None
+    if any(w in titel_norm for w in cfg["ausschluss"]):
+        zaehler["ausgeschlossen"] += 1
+        return None
+
+    # Bereich aus dem Titel; sonst aus Abteilung/Kategorie der Anzeige (aber nicht für
+    # Bürojobs, IT, Steuern usw.); sonst der Standard-Bereich der Firma (nur mit Stufe).
+    bereiche = finde_bereiche(titel_norm, cfg["bereiche"])
+    fachfremd = bool(FACHFREMD.search(titel_norm))
+    if not bereiche and not fachfremd:
+        for hinweis in e.get("hinweise") or []:
+            bereiche = finde_bereiche(normalisiere(hinweis), cfg["bereiche"])
+            if bereiche:
+                break
+
+    arten = bestimme_arten(e.get("arten") or set(), titel_norm)
+    stufen = bestimme_stufen(titel, arten)
+    if stufen == [OHNE_STUFE] and e.get("stufe"):
+        stufen = [e["stufe"]]
+
+    bekannte = {name for name, _ in cfg["bereiche"]}
+    if not bereiche and firma.get("bereiche") and stufen != [OHNE_STUFE] and not fachfremd:
+        bereiche = [b for b in firma["bereiche"] if b in bekannte]
+    if not bereiche:
+        zaehler["kein_bereich"] += 1
+        return None
+
+    orte = e.get("orte") or ([firma["sitz"]] if firma.get("sitz") else [])
+    regionen, ort, weitere = ordne_regionen(orte, cfg)
+    if not regionen:
+        zaehler["ausserhalb"] += 1
+        return None
+
+    herkunft = herkunft_von(firma)
+    stelle = {
+        "id": kurz_id(f"{herkunft}|{e['id']}", "fs-"),
+        "titel": titel,
+        "firma": e.get("firma") or firma["name"],
+        "ort": ort,
+        "plz": "",
+        "regionen": regionen,
+        "bereiche": bereiche,
+        "arten": arten,
+        "stufen": stufen,
+        "veroeffentlicht": (e.get("datum") or None) and e["datum"].isoformat(),
+        "link": e["link"],
+        "quelle": QUELLE_FIRMA,
+        "quellen": [QUELLE_FIRMA],
+        "herkunft": herkunft,
+        # Namensbestandteile zum Erkennen derselben Anzeige bei der Arbeitsagentur
+        "_kern": firmenkern(" ".join([firma["name"], e.get("firma") or "", *firma.get("aliase", [])])),
+    }
+    if weitere:
+        stelle["weitere_orte"] = weitere
+    zaehler["im_radar"] += 1
+    return stelle
+
+
+def sammle_firmen(cfg: dict, heute: date, protokoll: list) -> tuple[list[dict], list[dict], set[str]]:
+    """Fragt alle Firmen ab. Liefert (Stellen, Bericht je Firma, ausgefallene Herkünfte)."""
+    stellen, bericht, ausgefallen = [], [], set()
+    for firma in cfg["firmen"]:
+        abruf = QUELLEN.get(firma["system"])
+        eintrag = {"name": firma["name"], "system": firma["system"], "herkunft": herkunft_von(firma)}
+        if not abruf:
+            eintrag.update(status="fehler", fehler=f"unbekanntes System '{firma['system']}'")
+            bericht.append(eintrag)
+            continue
+        try:
+            roh = abruf(firma, heute)
+        except Exception as fehler:  # noqa: BLE001
+            ausgefallen.add(herkunft_von(firma))
+            eintrag.update(status="fehler", fehler=str(fehler)[:200])
+            protokoll.append(f"{firma['name']} ({firma['system']}): {str(fehler)[:160]}")
+            bericht.append(eintrag)
+            continue
+        zaehler = Counter()
+        gesehen_ids = set()
+        for e in roh:
+            if e["id"] in gesehen_ids:
+                continue
+            gesehen_ids.add(e["id"])
+            stelle = baue_firmenstelle(e, firma, cfg, zaehler)
+            if stelle:
+                stellen.append(stelle)
+        eintrag.update(status="ok", gefunden=len(gesehen_ids), im_radar=zaehler["im_radar"],
+                       ausserhalb=zaehler["ausserhalb"], kein_bereich=zaehler["kein_bereich"],
+                       ausgeschlossen=zaehler["ausgeschlossen"])
+        bericht.append(eintrag)
+        time.sleep(PAUSE_SEKUNDEN)
+    return stellen, bericht, ausgefallen
+
+
+# --- Zusammenführen und Speichern ------------------------------------------------
+
+
+# Allgemeine Namensteile, die beim Vergleich von Firmennamen nicht zählen
+_RECHTSFORMEN = {
+    "gmbh", "ag", "kg", "kgaa", "co", "mbh", "mbb", "partg", "partnerschaft", "partnerschaftsgesellschaft",
+    "wpg", "stbg", "wirtschaftspruefungsgesellschaft", "steuerberatungsgesellschaft", "rechtsanwaltsgesellschaft",
+    "wirtschaftspruefer", "steuerberater", "rechtsanwaelte", "llp", "ltd", "inc", "se", "und", "the",
+    "deutschland", "germany", "europe", "group", "gruppe", "holding", "international", "partner", "partners",
+    "associates", "consulting", "consultants", "management", "capital", "advisory", "advisors", "corporate",
+    "finance", "beratung", "private", "credit", "equity", "investment", "investments", "bank",
+}
+
+
+def firmenkern(name: str) -> set[str]:
+    return {w for w in normalisiere(name).split() if len(w) >= 3 and w not in _RECHTSFORMEN}
+
+
+def verbinde_dubletten(ba_stellen: dict, firmen_stellen: list[dict]) -> tuple[list[dict], int]:
+    """Steht eine Firmen-Stelle auch bei der Arbeitsagentur, wird sie dort verknüpft."""
+    index: dict[str, list[dict]] = {}
+    for s in ba_stellen.values():
+        index.setdefault(normalisiere(s["titel"]), []).append(s)
+    eigene, doppelt = [], 0
+    for fs in firmen_stellen:
+        kandidat = next((s for s in index.get(normalisiere(fs["titel"]), [])
+                         if set(s["regionen"]) & set(fs["regionen"]) and firmenkern(s["firma"]) & fs["_kern"]),
+                        None)
+        if kandidat:
+            doppelt += 1
+            kandidat["quellen"] = sorted(set(kandidat["quellen"]) | {QUELLE_FIRMA})
+            kandidat.setdefault("extern", fs["link"])
+            kandidat.setdefault("_verbunden", []).append(fs["id"])
+            # Weitere Standorte von der Karriereseite übernehmen
+            kandidat["regionen"] += [r for r in fs["regionen"] if r not in kandidat["regionen"]]
+            bekannt = {normalisiere(o) for o in [kandidat["ort"], *kandidat.get("weitere_orte", [])]}
+            dazu = [o for o in [fs["ort"], *fs.get("weitere_orte", [])] if o and normalisiere(o) not in bekannt]
+            if dazu:
+                kandidat["weitere_orte"] = (kandidat.get("weitere_orte", []) + dazu)[:20]
+        else:
+            eigene.append(fs)
+    return eigene, doppelt
+
+
+def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei, jetzt, heute, cfg):
+    """Neue Stellen mit dem letzten Stand verbinden; liefert (stellen, anzahl_neu).
+
+    neu_dabei: Quellen, die zum ersten Mal erfolgreich abgefragt wurden. Ihre Stellen
+    gelten nicht als "gerade eben entdeckt", sondern erscheinen mit ihrem Datum.
+    """
+    stellen, neu = {}, 0
+    # Stand früher bei Arbeitsagentur UND Karriereseite, ist die Anzeige bei der
+    # Arbeitsagentur aber inzwischen weg, übernimmt die Karriereseite ihre Daten.
+    frueher_doppelt: dict[str, list[dict]] = {}
+    for s in alte_stellen.values():
+        if s.get("herkunft", "ba") == "ba" and QUELLE_FIRMA in s.get("quellen", []):
+            frueher_doppelt.setdefault(normalisiere(s.get("titel", "")), []).append(s)
+
+    for stelle in list(ba_stellen.values()) + firmen_stellen:
+        if "ids" in stelle:  # Stelle der BA: bekannte ID behalten
+            ids = stelle.pop("ids")
+            stelle["id"] = next((i for i in ids if i in alte_stellen), ids[0])
+        sid = stelle["id"]
+        v1_id = stelle.pop("_v1_id", None)
+        verbunden = [i for i in stelle.pop("_verbunden", []) if i in alte_stellen]
+        kern = stelle.pop("_kern", None)
+        datum = date.fromisoformat(stelle["veroeffentlicht"]) if stelle.get("veroeffentlicht") else None
+
+        alt = alte_stellen.get(sid) or (alte_stellen.get(v1_id) if v1_id else None)
+        if alt is None and verbunden:
+            alt = alte_stellen[verbunden[0]]
+        if alt is None and kern is not None:
+            alt = next((s for s in frueher_doppelt.get(normalisiere(stelle["titel"]), [])
+                        if set(s.get("regionen", [])) & set(stelle["regionen"])
+                        and firmenkern(s.get("firma", "")) & kern), None)
+        # Frühere IDs merken, damit gemerkte Stellen auf der Webseite erhalten bleiben
+        frueher = set((alt or {}).get("alt", [])) | set(verbunden)
+        if alt and alt.get("id"):
+            frueher.add(alt["id"])
+        if v1_id and v1_id in alte_stellen:
+            frueher.add(v1_id)
+        frueher.discard(sid)
         if frueher:
             stelle["alt"] = sorted(frueher)
 
+        erster_lauf = stelle.get("herkunft", "ba") in neu_dabei
         if alt and alt.get("gesehen"):
             if alt.get("genau"):
                 stelle["gesehen"], stelle["genau"] = alt["gesehen"], True
             else:
                 # Nur Datum bekannt: das Veröffentlichungsdatum zählt (das frühere von beiden).
-                stelle["gesehen"] = min(str(alt["gesehen"])[:10], datum.isoformat())
+                stelle["gesehen"] = min(str(alt["gesehen"])[:10], (datum or heute).isoformat())
                 stelle["genau"] = False
         else:
             neu += 1
-            if erster_lauf or datum < heute - timedelta(days=1):
-                # Ältere Anzeige: Uhrzeit unbekannt, nur das Datum zählt
+            if datum and (erster_lauf or datum < heute - timedelta(days=1)):
+                # Ältere Anzeige oder neue Quelle: Uhrzeit unbekannt, nur das Datum zählt
                 stelle["gesehen"], stelle["genau"] = datum.isoformat(), False
+            elif erster_lauf:
+                stelle["gesehen"], stelle["genau"] = heute.isoformat(), False
             else:
                 stelle["gesehen"], stelle["genau"] = jetzt.isoformat().replace("+00:00", "Z"), True
+        stelle["veroeffentlicht"] = (datum or date.fromisoformat(str(stelle["gesehen"])[:10])).isoformat()
         stellen[sid] = stelle
 
-    if status != "ok":
-        # Wenn Abfragen fehlgeschlagen sind, nichts löschen – nur ergänzen,
-        # aber keine uralten Einträge mitschleppen.
-        grenze = (heute - timedelta(days=cfg["max_alter"] + 14)).isoformat()
+    # Ist eine Quelle ausgefallen, bleiben ihre bisherigen Stellen erhalten. Fehlt eine
+    # Stelle länger als eine Woche (z. B. weil eine Firmen-Seite umgezogen ist), fällt sie weg.
+    if ausgefallen:
+        grenze = (heute - timedelta(days=7)).isoformat()
         uebernommen = {i for s in stellen.values() for i in s.get("alt", [])}
         for sid, alt in alte_stellen.items():
-            if sid not in stellen and sid not in uebernommen and str(alt.get("gesehen", ""))[:10] >= grenze:
-                stellen[sid] = alt
+            if sid in stellen or sid in uebernommen or alt.get("herkunft", "ba") not in ausgefallen:
+                continue
+            vermisst = str(alt.get("vermisst_seit") or heute.isoformat())
+            if vermisst >= grenze:
+                stellen[sid] = {**alt, "vermisst_seit": vermisst}
     return stellen, neu
 
 
@@ -680,10 +1223,11 @@ def main() -> None:
     cfg = lade_einstellungen()
     jetzt = datetime.now(timezone.utc).replace(microsecond=0)
     heute = jetzt.astimezone(BERLIN).date()
+    zeitstempel = jetzt.isoformat().replace("+00:00", "Z")
 
     alt = lade_alte_daten()
     alte_stellen = {s["id"]: s for s in alt.get("stellen", []) if isinstance(s, dict) and s.get("id")}
-    alte_quelle = (alt.get("quellen") or {}).get(BA_NAME, {})
+    alte_quellen = alt.get("quellen") or {}
 
     statistik: Counter = Counter()
     beispiele: dict = {"kein_bereich": Counter(), "ausgeschlossen": Counter()}
@@ -691,18 +1235,39 @@ def main() -> None:
     diagnose: dict = {}
     start = time.monotonic()
 
+    # 1. Arbeitsagentur
     treffer, abfragen, fehlgeschlagen, endpunkt = sammle_arbeitsagentur(
         cfg, statistik, beispiele, protokoll, diagnose)
-
     if not endpunkt or abfragen == 0 or fehlgeschlagen == abfragen:
         status = "fehler"
     elif fehlgeschlagen:
         status = "teilweise"
     else:
         status = "ok"
+    ba_stellen = baue_ba_stellen(treffer, cfg, heute)
+    dauer_ba = time.monotonic() - start
 
-    stellen, neu = fuehre_zusammen(treffer, alte_stellen, status, jetzt, heute, cfg)
-    zeitstempel = jetzt.isoformat().replace("+00:00", "Z")
+    # 2. Firmen-Karriereseiten
+    firmen_protokoll: list[str] = []
+    firmen_stellen, firmen_bericht, ausgefallen = sammle_firmen(cfg, heute, firmen_protokoll)
+    firmen_stellen, doppelt = verbinde_dubletten(ba_stellen, firmen_stellen)
+    if status != "ok":
+        ausgefallen.add("ba")
+    firmen_fehler = sum(1 for b in firmen_bericht if b["status"] != "ok")
+    firmen_status = ("ok" if not firmen_fehler else
+                     "fehler" if firmen_fehler == len(firmen_bericht) else "teilweise") if firmen_bericht else "keine"
+
+    # 3. Zusammenführen. Quellen, die zum ersten Mal dabei sind, bringen keine "neuen" Stellen.
+    alte_firmen = alte_quellen.get(QUELLE_FIRMA + "n") or {}
+    bekannt = set(alte_firmen.get("bekannt") or [])
+    if alte_stellen or (alte_quellen.get(QUELLE_BA) or {}).get("letzter_erfolg"):
+        bekannt.add("ba")
+    erfolgreich = {b["herkunft"] for b in firmen_bericht if b["status"] == "ok"}
+    if status != "fehler":
+        erfolgreich.add("ba")
+    neu_dabei = erfolgreich - bekannt
+    stellen, neu = fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei,
+                                   jetzt, heute, cfg)
 
     ohne_ort = sum(1 for s in stellen.values() if not s.get("ort"))
     ohne_stufe = Counter(s["titel"] for s in stellen.values() if s.get("stufen") == [OHNE_STUFE])
@@ -712,27 +1277,38 @@ def main() -> None:
         "ohne_stufe": [t for t, _ in ohne_stufe.most_common(60)],
         "kein_bereich": [t for t, _ in beispiele["kein_bereich"].most_common(150)],
         "ausgeschlossen": [t for t, _ in beispiele["ausgeschlossen"].most_common(60)],
+        "firmen": firmen_bericht,
     })
 
+    regionen_liste = [r["name"] for r in cfg["regionen"]]
+    if any(cfg["remote_region"] in s.get("regionen", []) for s in stellen.values()):
+        regionen_liste.append(cfg["remote_region"])
     daten = {
-        "version": 2,
+        "version": 3,
         "stand": zeitstempel,
         "quellen": {
-            BA_NAME: {
+            QUELLE_BA: {
                 "status": status,
                 "abfragen": abfragen,
                 "fehlgeschlagen": fehlgeschlagen,
-                "letzter_erfolg": zeitstempel if status != "fehler" else alte_quelle.get("letzter_erfolg"),
-            }
+                "letzter_erfolg": zeitstempel if status != "fehler" else (alte_quellen.get(QUELLE_BA) or {}).get("letzter_erfolg"),
+            },
+            QUELLE_FIRMA + "n": {
+                "status": firmen_status,
+                "firmen": len(firmen_bericht),
+                "fehlgeschlagen": firmen_fehler,
+                "letzter_erfolg": zeitstempel if firmen_status in ("ok", "teilweise") else alte_firmen.get("letzter_erfolg"),
+                "bekannt": sorted((bekannt | erfolgreich) - {"ba"}),
+            },
         },
         "bereiche": [name for name, _ in cfg["bereiche"]],
-        "regionen": [r["name"] for r in cfg["regionen"]],
+        "regionen": regionen_liste,
         "stufen": STUFEN + [OHNE_STUFE],
         "diagnose": diagnose,
         "stellen": list(stellen.values()),
     }
     if status == "fehler" and alt.get("diagnose"):
-        daten["diagnose"] = {**alt["diagnose"], "letzter_fehler": protokoll[:5]}
+        daten["diagnose"] = {**alt["diagnose"], "letzter_fehler": protokoll[:5], "firmen": firmen_bericht}
     schreibe_daten(daten)
 
     # --- Bericht für das Protokoll bei GitHub ---
@@ -740,32 +1316,43 @@ def main() -> None:
     bereich_zahlen = Counter(b for s in stellen.values() for b in s["bereiche"])
     art_zahlen = Counter(a for s in stellen.values() for a in s["arten"])
     stufen_zahlen = Counter(x for s in stellen.values() for x in s.get("stufen", [OHNE_STUFE]))
+    aus_firmen = sum(1 for s in stellen.values() if QUELLE_FIRMA in s.get("quellen", []))
     zeilen = [
         f"## Stellenradar – Lauf vom {jetzt.astimezone(BERLIN):%d.%m.%Y, %H:%M} Uhr",
         "",
         f"- Arbeitsagentur: **{status}** – {abfragen} Abfragen, {fehlgeschlagen} fehlgeschlagen, "
-        f"Schnittstelle `{endpunkt or 'keine erreichbar'}`, Dauer {dauer:.0f} s",
+        f"Schnittstelle `{endpunkt or 'keine erreichbar'}`, Dauer {dauer_ba:.0f} s",
+        f"- Karriereseiten: **{firmen_status}** – {len(firmen_bericht)} Firmen, {firmen_fehler} nicht erreichbar, "
+        f"{aus_firmen} Stellen im Radar (davon {doppelt} auch bei der Arbeitsagentur), Dauer {dauer - dauer_ba:.0f} s",
         f"- Stellen im Radar: **{len(stellen)}**, davon neu in diesem Lauf: **{neu}**, ohne Ortsangabe: {ohne_ort}",
-        f"- Verworfene Titel: {len(beispiele['kein_bereich'])} ohne passenden Bereich, "
+        f"- Verworfene Titel (Arbeitsagentur): {len(beispiele['kein_bereich'])} ohne passenden Bereich, "
         f"{len(beispiele['ausgeschlossen'])} durch die Ausschlussliste, {statistik['unlesbar']} unlesbare Einträge",
         "- Nach Bereich: " + (", ".join(f"{b} {n}" for b, n in bereich_zahlen.most_common()) or "–"),
         "- Nach Anstellungsart: " + (", ".join(f"{a} {n}" for a, n in art_zahlen.most_common()) or "–"),
         "- Nach Karrierestufe: " + (", ".join(f"{a} {n}" for a, n in stufen_zahlen.most_common()) or "–"),
     ]
+    mit_treffern = sorted((b for b in firmen_bericht if b.get("im_radar")), key=lambda b: -b["im_radar"])
+    if mit_treffern:
+        zeilen.append("- Firmen mit Stellen im Radar: " + ", ".join(f"{b['name']} {b['im_radar']}" for b in mit_treffern))
+    ohne = [b["name"] for b in firmen_bericht if b["status"] == "ok" and not b.get("im_radar")]
+    if ohne:
+        zeilen.append("- Firmen ohne passende Stelle in deinen Regionen: " + ", ".join(ohne))
     if beispiele.get("felder"):
         zeilen.append("- Felder der Schnittstelle: " + ", ".join(beispiele["felder"]))
     for schluessel, ueberschrift in (("kein_bereich", "Häufigste Titel ohne passenden Bereich"),
                                       ("ausgeschlossen", "Häufigste durch die Ausschlussliste verworfene Titel")):
         if beispiele[schluessel]:
             zeilen.append(f"- {ueberschrift}: " + "; ".join(t for t, _ in beispiele[schluessel].most_common(12)))
-    if protokoll:
-        zeilen += ["", "**Hinweise:**"] + [f"- {p}" for p in protokoll]
+    if protokoll or firmen_protokoll:
+        zeilen += ["", "**Hinweise:**"] + [f"- {p}" for p in protokoll + firmen_protokoll]
     berichte(zeilen, status)
 
     if status == "fehler":
         print("::warning::Die Arbeitsagentur konnte nicht abgefragt werden. Die bisherigen Stellen bleiben erhalten.")
     elif status == "teilweise":
         print(f"::warning::{fehlgeschlagen} von {abfragen} Abfragen sind fehlgeschlagen.")
+    if firmen_fehler:
+        print(f"::warning::{firmen_fehler} von {len(firmen_bericht)} Firmen-Karriereseiten waren nicht erreichbar.")
 
 
 if __name__ == "__main__":
