@@ -1,0 +1,142 @@
+# ==============================================================
+#  Stellenradar – Einstellungen
+#
+#  Hier legst du fest, WAS und WO gesucht wird.
+#  Änderungen gelten ab dem nächsten stündlichen Lauf.
+#  Zeilen, die mit # beginnen, sind Kommentare.
+#
+#  Bearbeiten direkt bei GitHub: Datei anklicken, oben rechts
+#  auf den Stift klicken, ändern, dann "Commit changes".
+# ==============================================================
+
+[allgemein]
+# Wie alt dürfen Anzeigen höchstens sein? (in Tagen, maximal 100)
+max_alter_tage = 60
+
+# Anzeigen von privaten Personalvermittlern ausblenden?
+ohne_personalvermittlung = true
+
+# Anzeigen von Zeitarbeitsfirmen ausblenden?
+ohne_zeitarbeit = true
+
+
+# --------------------------------------------------------------
+#  Regionen: Ort und Umkreis in Kilometern.
+#  Für eine weitere Region einfach einen Block kopieren.
+# --------------------------------------------------------------
+
+[[region]]
+name = "Rhein-Neckar"
+ort = "Mannheim"
+umkreis_km = 30
+
+[[region]]
+name = "Frankfurt/Rhein-Main"
+ort = "Frankfurt am Main"
+umkreis_km = 30
+
+
+# --------------------------------------------------------------
+#  Suchbegriffe: Mit jedem Begriff wird in jeder Region gesucht.
+#  Lieber genaue Begriffe als allgemeine, sonst kommen viele
+#  Fehltreffer (z. B. "Sanierung" findet vor allem Bauberufe).
+# --------------------------------------------------------------
+
+[suche]
+begriffe = [
+  "Wirtschaftsprüfung",
+  "Prüfungsassistent",
+  "Audit",
+  "Assurance",
+  "Interne Revision",
+  "Internal Audit",
+  "Revisor",
+  "Transaction Services",
+  "Due Diligence",
+  "Transaktionsberatung",
+  "Deal Advisory",
+  "Restrukturierung",
+  "Restructuring",
+  "Turnaround",
+  "Sanierungsberatung",
+  "M&A",
+  "Mergers Acquisitions",
+  "Corporate Finance",
+  "Debt Advisory",
+  "Private Equity",
+  "Valuation",
+  "Unternehmensbewertung",
+]
+
+
+# --------------------------------------------------------------
+#  Bereiche: So werden Stellen anhand ihres Titels einsortiert.
+#
+#  - Groß-/Kleinschreibung und Umlaute spielen keine Rolle.
+#  - Ein Wortanfang reicht ("wirtschaftsprüf" findet auch
+#    "Wirtschaftsprüfer" und "Wirtschaftsprüfung").
+#  - Die Reihenfolge ist ein Vorrang: Was ein weiter oben
+#    stehender Bereich schon erkannt hat, zählt für spätere
+#    Bereiche nicht mehr. So landet "Internal Audit" nur unter
+#    Interne Revision und nicht zusätzlich unter Prüfung.
+#  - Stellen, die in KEINEN Bereich passen, werden verworfen.
+# --------------------------------------------------------------
+
+[bereiche]
+"Interne Revision" = [
+  "interne revision", "internal audit", "innenrevision", "konzernrevision",
+  "group audit", "revisor", "revision",
+]
+"Wirtschaftsprüfung" = [
+  "wirtschaftsprüf", "prüfungsassist", "abschlussprüf", "prüfungsleit",
+  "wp-assist", "assurance", "audit",
+]
+"Transaction Services / FDD" = [
+  "transaction services", "transaction advisory", "financial due diligence",
+  "due diligence", "transaktionsberatung", "deal advisory",
+  "financial advisory", "fdd",
+]
+"Restrukturierung" = [
+  "restrukturierung", "restructuring", "turnaround", "sanierungsberat",
+  "sanierungsmanag", "sanierung", "krisenberat", "insolvenzberat",
+]
+"M&A / Corporate Finance" = [
+  "m&a", "m & a", "mergers", "acquisitions", "corporate finance",
+]
+"Debt Advisory" = [
+  "debt advisory", "debt finance", "debt capital", "fremdkapital",
+  "leveraged finance", "acquisition finance", "finanzierungsberat",
+]
+"Private Equity" = [
+  "private equity", "venture capital", "beteiligungsgesellschaft",
+  "beteiligungsmanag",
+]
+"Bewertung / Valuation" = [
+  "valuation", "unternehmensbewertung", "kaufpreisallokation",
+  "purchase price allocation", "impairment",
+]
+
+
+# --------------------------------------------------------------
+#  Ausschluss: Enthält der Titel eines dieser Wörter, wird die
+#  Stelle verworfen. Gegen typische Fehltreffer wie Qualitäts-
+#  Audits, Bausanierung oder technische Revisionen.
+# --------------------------------------------------------------
+
+[ausschluss]
+woerter = [
+  # Qualitätsmanagement, Zertifizierung, Technik
+  "qualitätsmanag", "qualitätssicher", "qualitätsaudit", "quality",
+  "lead auditor", "zertifizier", "iso 9001", "iso 14001", "iso 27001",
+  "iatf", "gmp", "lebensmittel", "hygiene", "arbeitssicherheit",
+  "arbeitsschutz", "umweltmanag", "energiemanag", "lieferantenaudit",
+  "lieferantenentwickl", "prozessaudit", "produktaudit", "medizinprodukt",
+  "technical due diligence", "technische due diligence",
+  # Bau und Handwerk
+  "betonsanierung", "altbausanierung", "kanalsanierung", "dachsanierung",
+  "schadstoffsanierung", "fassadensanierung", "bausanierung",
+  "sanierungstechn", "sanierungsarbeit", "brandschaden", "wasserschaden",
+  "energieberat", "energetisch", "bauleit", "anlagenrevision",
+  "revisionsplan", "kraftwerk", "turbine", "instandhaltung",
+  "elektriker", "mechatroniker", "monteur",
+]
