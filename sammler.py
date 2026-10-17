@@ -95,6 +95,8 @@ STUFEN_REGELN = [
     ("Senior", r"assistant manager|pruefungsleit|\b(?:investment|portfolio|fund|asset|"
                r"business development|account|relationship|risk|product|projekt|project|"
                r"credit|kredit|office|quality)\s?manager"),
+    # "Assistant/Associate Director" liegt zwischen Manager und Director
+    ("Manager", r"(?:assistant|associate) director"),
     ("Director & Partner", r"\bpartner(?:in)?\b|\bdirector\b|\bdirektor(?:in)?\b|head of|"
                            r"\bleiter(?:in)?\b|\bleitung\b|abteilungsleit|bereichsleit|"
                            r"geschaeftsfuehr|vice president|\bvp\b|\bprincipal\b|\bchief\b"),
@@ -526,15 +528,21 @@ def verarbeite(roh, region, art, cfg, treffer, statistik, beispiele):
         statistik["unlesbar"] += 1
         return
     titel_norm = normalisiere(stelle["titel"])
-    pruef_text = f"{titel_norm} {normalisiere(stelle['beruf'])}"
 
-    if any(w in pruef_text for w in cfg["ausschluss"]):
+    # Die Ausschlussliste gilt für den Titel. Den von der BA zugeordneten Beruf
+    # prüfen wir nur, wenn der Titel allein keinen Bereich ergibt – die Zuordnung
+    # der BA ist oft ungenau (z. B. "Internal Auditor" als Qualitäts-Auditor).
+    if any(w in titel_norm for w in cfg["ausschluss"]):
         beispiele["ausgeschlossen"][stelle["titel"]] += 1
         return
 
     bereiche = finde_bereiche(titel_norm, cfg["bereiche"])
     if not bereiche and stelle["beruf"]:
-        bereiche = finde_bereiche(normalisiere(stelle["beruf"]), cfg["bereiche"])
+        beruf_norm = normalisiere(stelle["beruf"])
+        if any(w in beruf_norm for w in cfg["ausschluss"]):
+            beispiele["ausgeschlossen"][stelle["titel"]] += 1
+            return
+        bereiche = finde_bereiche(beruf_norm, cfg["bereiche"])
     if not bereiche:
         beispiele["kein_bereich"][stelle["titel"]] += 1
         return

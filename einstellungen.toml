@@ -52,9 +52,10 @@ begriffe = [
   "Internal Audit",
   "Revisor",
   "Transaction Services",
-  "Due Diligence",
+  "Diligence",
   "Transaktionsberatung",
   "Deal Advisory",
+  "Deals",
   "Restrukturierung",
   "Restructuring",
   "Turnaround",
@@ -93,19 +94,23 @@ begriffe = [
 ]
 "Transaction Services / FDD" = [
   "transaction services", "transaction advisory", "financial due diligence",
-  "due diligence", "transaktionsberatung", "deal advisory",
+  "diligence", "transaktionsberatung", "deal advisory", "deals",
+  "deal management", "deal execution", "transaction accounting",
   "financial advisory", "fdd",
 ]
 "Restrukturierung" = [
   "restrukturierung", "restructuring", "turnaround", "sanierungsberat",
   "sanierungsmanag", "sanierung", "krisenberat", "insolvenzberat",
+  "performance improvement",
 ]
 "M&A / Corporate Finance" = [
   "m&a", "m & a", "mergers", "acquisitions", "corporate finance",
+  "transaction strategy",
 ]
 "Debt Advisory" = [
-  "debt advisory", "debt finance", "debt capital", "fremdkapital",
-  "leveraged finance", "acquisition finance", "finanzierungsberat",
+  "debt advisory", "debt finance", "debt capital", "debt & capital",
+  "capital advisory", "fremdkapital", "leveraged finance",
+  "acquisition finance", "finanzierungsberat",
 ]
 "Private Equity" = [
   "private equity", "venture capital", "beteiligungsgesellschaft",
