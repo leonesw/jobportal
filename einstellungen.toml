@@ -138,5 +138,8 @@ woerter = [
   "sanierungstechn", "sanierungsarbeit", "brandschaden", "wasserschaden",
   "energieberat", "energetisch", "bauleit", "anlagenrevision",
   "revisionsplan", "kraftwerk", "turbine", "instandhaltung",
-  "elektriker", "mechatroniker", "monteur",
+  "elektriker", "mechatroniker", "monteur", "facility",
+  # Hotel-Nachtdienst ("Night Audit"), Anwaltsberufe, Sekretariat
+  "night audit", "rechtsanwalt", "rechtsanwält", "jurist",
+  "partnerassist", "teamassist", "assistenz", "sekretär",
 ]

@@ -142,6 +142,7 @@
     content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--papier);
   }
   .option .zahl { color: var(--tinte-2); font-size: 14px; }
+  .option .erklaerung { grid-column: 2 / 4; margin-top: -4px; font-size: 13px; color: var(--tinte-2); line-height: 1.35; }
   .option.leer-option { color: var(--tinte-2); }
   .zuruecksetzen {
     background: none; border: 0; padding: 4px 0; color: var(--gruenstift);
@@ -199,6 +200,8 @@
     background: var(--gruen-hell); color: var(--tinte);
   }
   .marken span.art { background: transparent; border: 1px solid var(--linie-stark); padding: 1px 7px; }
+  .marken span.stufe { background: transparent; border: 1px solid var(--tinte-2); padding: 1px 7px; font-weight: 600; }
+  .firma .weitere { color: var(--tinte-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
   .marken a { font-size: 13px; margin-left: 4px; text-underline-offset: 2px; }
 
   .aktionen { display: flex; gap: 4px; align-items: flex-start; }
@@ -306,6 +309,7 @@
     </label>
     <fieldset id="gruppe-zeitraum"><legend>Zeitraum</legend></fieldset>
     <fieldset id="gruppe-arten"><legend>Anstellungsart</legend></fieldset>
+    <fieldset id="gruppe-stufen"><legend>Karrierestufe</legend></fieldset>
     <fieldset id="gruppe-bereiche"><legend>Bereich</legend></fieldset>
     <fieldset id="gruppe-regionen"><legend>Region</legend></fieldset>
     <fieldset id="gruppe-liste"><legend>Meine Liste</legend>
@@ -357,7 +361,17 @@
     ["7t", "Letzte 7 Tage", 7],
     ["30t", "Letzte 30 Tage", 30],
   ];
-  const STANDARD = { zeitraum: "alle", arten: ["Vollzeit"], bereiche: [], regionen: [], sortierung: "neu" };
+  const STANDARD = { zeitraum: "alle", arten: ["Vollzeit"], stufen: [], bereiche: [], regionen: [], sortierung: "neu" };
+  const GRUPPEN = ["arten", "stufen", "bereiche", "regionen"];
+  const OHNE_STUFE = "Ohne Angabe";
+  const STUFEN = ["Berufseinstieg", "Senior", "Manager", "Director & Partner", OHNE_STUFE];
+  const STUFEN_HINWEISE = {
+    "Berufseinstieg": "Junior, Consultant, Associate, Assistent, Praktika",
+    "Senior": "Senior Consultant, Senior Associate, Prüfungsleiter",
+    "Manager": "Manager, Senior Manager, Teamleitung",
+    "Director & Partner": "Director, Head of, Leitung, Partner",
+    [OHNE_STUFE]: "Titel ohne erkennbare Stufe",
+  };
 
   const $ = (id) => document.getElementById(id);
 
@@ -369,7 +383,7 @@
     try {
       localStorage.setItem(SPEICHERNAME, JSON.stringify({
         filter: {
-          zeitraum: zustand.zeitraum, arten: [...zustand.arten], bereiche: [...zustand.bereiche],
+          zeitraum: zustand.zeitraum, arten: [...zustand.arten], stufen: [...zustand.stufen], bereiche: [...zustand.bereiche],
           regionen: [...zustand.regionen], sortierung: zustand.sortierung,
         },
         gemerkt: [...gemerkt], ausgeblendet: [...ausgeblendet], zuletzt: besuchJetzt,
@@ -383,7 +397,7 @@
   const f = Object.assign({}, STANDARD, gespeichert.filter || {});
   const zustand = {
     suche: "", sucheWorte: [],
-    zeitraum: f.zeitraum, arten: new Set(f.arten), bereiche: new Set(f.bereiche),
+    zeitraum: f.zeitraum, arten: new Set(f.arten), stufen: new Set(f.stufen), bereiche: new Set(f.bereiche),
     regionen: new Set(f.regionen), sortierung: f.sortierung,
     nurGemerkt: false, zeigeAusgeblendet: false, sichtbar: SCHRITT,
   };
@@ -480,16 +494,22 @@
   let bereichListe = [];
   let regionListe = [];
   let artListe = [];
+  let stufenListe = [];
 
   function vorbereiten(roh) {
     const t = Date.parse(roh.gesehen) || Date.parse(roh.veroeffentlicht) || 0;
+    const weitere = Array.isArray(roh.weitere_orte) ? roh.weitere_orte : [];
     return {
       ...roh,
       t,
+      ort: roh.ort || "",
+      firma: roh.firma || "",
+      weitere,
       bereiche: Array.isArray(roh.bereiche) ? roh.bereiche : [],
       arten: Array.isArray(roh.arten) ? roh.arten : [],
+      stufen: Array.isArray(roh.stufen) && roh.stufen.length ? roh.stufen : [OHNE_STUFE],
       regionen: Array.isArray(roh.regionen) ? roh.regionen : [],
-      text: normalisiere(`${roh.titel} ${roh.firma} ${roh.ort} ${roh.plz || ""}`),
+      text: normalisiere(`${roh.titel} ${roh.firma} ${roh.ort} ${weitere.join(" ")} ${roh.plz || ""}`),
       neu: letzterBesuch > 0 && t > letzterBesuch,
     };
   }
@@ -507,9 +527,9 @@
       const grenze = zeitGrenze(zustand.zeitraum);
       if (grenze && s.t < grenze) return false;
     }
-    if (ohne !== "arten" && zustand.arten.size && !s.arten.some((a) => zustand.arten.has(a))) return false;
-    if (ohne !== "bereiche" && zustand.bereiche.size && !s.bereiche.some((b) => zustand.bereiche.has(b))) return false;
-    if (ohne !== "regionen" && zustand.regionen.size && !s.regionen.some((r) => zustand.regionen.has(r))) return false;
+    for (const g of GRUPPEN) {
+      if (ohne !== g && zustand[g].size && !s[g].some((w) => zustand[g].has(w))) return false;
+    }
     return true;
   }
 
@@ -524,25 +544,28 @@
   function baueGruppe(id, name, typ, optionen) {
     const feld = $(id);
     feld.querySelectorAll(".option").forEach((o) => o.remove());
-    for (const [wert, beschriftung] of optionen) {
+    for (const [wert, beschriftung, hinweis] of optionen) {
       const eingabe = el("input", { type: typ, name, value: wert });
-      feld.append(el("label", { class: "option" }, eingabe, el("span", { text: beschriftung }), el("span", { class: "zahl" })));
+      feld.append(el("label", { class: "option" }, eingabe, el("span", { text: beschriftung }), el("span", { class: "zahl" }),
+        hinweis ? el("span", { class: "erklaerung", text: hinweis }) : null));
     }
   }
 
   function baueFilter() {
     baueGruppe("gruppe-zeitraum", "zeitraum", "radio", ZEITRAEUME.map((z) => [z[0], z[1]]));
     baueGruppe("gruppe-arten", "arten", "checkbox", artListe.map((a) => [a, a]));
+    baueGruppe("gruppe-stufen", "stufen", "checkbox", stufenListe.map((s) => [s, s, STUFEN_HINWEISE[s]]));
     baueGruppe("gruppe-bereiche", "bereiche", "checkbox", bereichListe.map((b) => [b, b]));
     baueGruppe("gruppe-regionen", "regionen", "checkbox", regionListe.map((r) => [r, r]));
     $("gruppe-regionen").hidden = regionListe.length < 2;
+    $("gruppe-stufen").hidden = !stufenListe.length;
     $("sortierung").value = vergleich[zustand.sortierung] ? zustand.sortierung : "neu";
     setzeEingaben();
   }
 
   function setzeEingaben() {
     document.querySelectorAll('#gruppe-zeitraum input').forEach((i) => { i.checked = i.value === zustand.zeitraum; });
-    for (const g of ["arten", "bereiche", "regionen"]) {
+    for (const g of GRUPPEN) {
       document.querySelectorAll(`#gruppe-${g} input`).forEach((i) => { i.checked = zustand[g].has(i.value); });
     }
     $("nur-gemerkt").checked = zustand.nurGemerkt;
@@ -556,7 +579,7 @@
       const n = grenze ? ohneZeit.filter((s) => s.t >= grenze).length : ohneZeit.length;
       o.querySelector(".zahl").textContent = n.toLocaleString("de-DE");
     });
-    for (const g of ["arten", "bereiche", "regionen"]) {
+    for (const g of GRUPPEN) {
       const basis = stellen.filter((s) => passt(s, g));
       document.querySelectorAll(`#gruppe-${g} .option`).forEach((o) => {
         const wert = o.querySelector("input").value;
@@ -569,8 +592,8 @@
     const versteckt = stellen.filter((s) => ausgeblendet.has(s.id)).length;
     $("zahl-ausgeblendet").textContent = versteckt ? versteckt.toLocaleString("de-DE") : "";
 
-    const aktiv = (zustand.zeitraum !== "alle" ? 1 : 0) + zustand.arten.size + zustand.bereiche.size +
-      zustand.regionen.size + (zustand.nurGemerkt ? 1 : 0) + (zustand.suche ? 1 : 0);
+    const aktiv = (zustand.zeitraum !== "alle" ? 1 : 0) + GRUPPEN.reduce((n, g) => n + zustand[g].size, 0) +
+      (zustand.nurGemerkt ? 1 : 0) + (zustand.suche ? 1 : 0);
     $("filter-oeffnen").textContent = aktiv ? `Filter (${aktiv})` : "Filter";
   }
 
@@ -590,10 +613,16 @@
       : el("span", { class: "titel", text: s.titel });
 
     const firma = el("p", { class: "firma" }, el("b", { text: s.firma || "Arbeitgeber unbekannt" }),
-      s.ort ? `, ${s.ort}` : "");
+      s.ort ? `, ${s.ort}` : "",
+      s.weitere.length ? " " : null,
+      s.weitere.length ? el("span", {
+        class: "weitere", tabindex: "0", title: `Auch in: ${s.weitere.join(", ")}`,
+        text: `+${s.weitere.length} ${s.weitere.length === 1 ? "weiterer Ort" : "weitere Orte"}`,
+      }) : null);
 
     const marken = el("p", { class: "marken" });
     for (const b of s.bereiche) marken.append(el("span", { text: b }));
+    for (const x of s.stufen) if (x !== OHNE_STUFE) marken.append(el("span", { class: "stufe", text: x }));
     for (const a of s.arten) marken.append(el("span", { class: "art", text: a }));
     if (extern) marken.append(el("a", { href: extern, target: "_blank", rel: "noopener", text: "Originalanzeige" }));
 
@@ -656,7 +685,7 @@
 
   function alleZuruecksetzen() {
     Object.assign(zustand, {
-      zeitraum: "alle", arten: new Set(), bereiche: new Set(), regionen: new Set(),
+      zeitraum: "alle", arten: new Set(), stufen: new Set(), bereiche: new Set(), regionen: new Set(),
       nurGemerkt: false, zeigeAusgeblendet: false, suche: "", sucheWorte: [],
     });
     $("suche").value = "";
@@ -682,7 +711,7 @@
   document.querySelector(".filter").addEventListener("change", (e) => {
     const i = e.target;
     if (i.name === "zeitraum") zustand.zeitraum = i.value;
-    else if (["arten", "bereiche", "regionen"].includes(i.name)) {
+    else if (GRUPPEN.includes(i.name)) {
       if (i.checked) zustand[i.name].add(i.value); else zustand[i.name].delete(i.value);
     } else if (i.id === "nur-gemerkt") zustand.nurGemerkt = i.checked;
     else if (i.id === "zeige-ausgeblendet") zustand.zeigeAusgeblendet = i.checked;
@@ -729,10 +758,23 @@
     regionListe = Array.isArray(daten.regionen) && daten.regionen.length ? daten.regionen : ausDaten("regionen");
     const vorhandeneArten = new Set(ausDaten("arten"));
     artListe = ARTEN.filter((a) => a === "Vollzeit" || vorhandeneArten.has(a));
+    const vorhandeneStufen = new Set(ausDaten("stufen"));
+    stufenListe = (Array.isArray(daten.stufen) && daten.stufen.length ? daten.stufen : STUFEN)
+      .filter((x) => x !== OHNE_STUFE || vorhandeneStufen.has(x));
 
     // Gespeicherte Auswahl nur übernehmen, wenn es die Werte noch gibt
-    for (const [g, liste] of [["arten", artListe], ["bereiche", bereichListe], ["regionen", regionListe]]) {
-      zustand[g] = new Set([...zustand[g]].filter((w) => liste.includes(w)));
+    const listen = { arten: artListe, stufen: stufenListe, bereiche: bereichListe, regionen: regionListe };
+    for (const g of GRUPPEN) {
+      zustand[g] = new Set([...zustand[g]].filter((w) => listen[g].includes(w)));
+    }
+
+    // Gemerkte und ausgeblendete Stellen auf neue IDs übertragen (nach Updates des Sammlers)
+    for (const s of stellen) {
+      for (const altId of Array.isArray(s.alt) ? s.alt : []) {
+        for (const menge of [gemerkt, ausgeblendet]) {
+          if (menge.has(altId)) { menge.delete(altId); menge.add(s.id); }
+        }
+      }
     }
     if (!ZEITRAEUME.some((z) => z[0] === zustand.zeitraum)) zustand.zeitraum = "alle";
 
