@@ -1,0 +1,67 @@
+# Stellenradar – Automatik
+# Läuft jede Stunde (Minute 17), sammelt neue Stellen und veröffentlicht die Webseite.
+# Manuell starten: Reiter "Actions" → "Stellen sammeln" → "Run workflow".
+
+name: Stellen sammeln
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # gesammelte Stellen (jobs.json) im Repository speichern
+  pages: write      # Webseite veröffentlichen
+  id-token: write   # wird von GitHub Pages verlangt
+
+concurrency:
+  group: stellenradar
+  cancel-in-progress: false
+
+jobs:
+  sammeln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: github-pages
+      url: ${{ steps.veroeffentlichen.outputs.page_url }}
+    steps:
+      - name: Dateien holen
+        uses: actions/checkout@v7
+
+      - name: Stellen abrufen
+        id: sammeln
+        run: python3 sammler.py
+
+      - name: Neue Daten speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add jobs.json
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen."
+          else
+            git commit -m "Stellen aktualisiert" --quiet
+            git pull --rebase --quiet origin "$GITHUB_REF_NAME" || git rebase --abort || true
+            git push --quiet origin "HEAD:$GITHUB_REF_NAME" || echo "::warning::Speichern fehlgeschlagen, der nächste Lauf holt es nach."
+          fi
+
+      - name: Webseite zusammenstellen
+        run: |
+          mkdir -p _site
+          cp index.html jobs.json _site/
+
+      - name: Webseite hochladen
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - name: Webseite veröffentlichen
+        id: veroeffentlichen
+        uses: actions/deploy-pages@v5
+
+      - name: Ergebnis prüfen
+        if: steps.sammeln.outputs.status == 'fehler'
+        run: |
+          echo "::error::Die Arbeitsagentur konnte nicht abgefragt werden. Details stehen im Schritt 'Stellen abrufen'."
+          exit 1
