@@ -19,7 +19,7 @@
 #    successfactors  feed (Stellen-Feed für Jobbörsen, ".../feed/<Nummer>"),
 #               ohne_marken (optional, z. B. eine Anwaltsgesellschaft)
 #    oracle     host, seite (Oracle Recruiting Cloud, z. B. Kroll)
-#    talemetry  basis, suche (Stellensuche als Webseite, z. B. A&M)
+#    talemetry  basis, suche (Stellensuche als Webseite)
 #    ebnerstolz standorte, fachbereiche (nur für Ebner Stolz)
 #
 #  "bereiche" (optional) gilt nur, wenn der Stellentitel selbst
@@ -155,11 +155,14 @@ konto = "bw-partner-partnerschaft-mbb"
 #  Große Restrukturierungs- und Transaktionsberatungen
 # --------------------------------------------------------------
 
-[[firma]]
-name = "Alvarez & Marsal"
-system = "talemetry"
-basis = "https://careers.alvarezandmarsal.com"
-suche = ["Frankfurt"]
+# Alvarez & Marsal sperrt automatische Abrufe von den GitHub-Servern
+# (Fehler 403 seit dem 18.10.2026), deshalb abgeschaltet. A&M-Stellen
+# lassen sich über LinkedIn-Jobalarme ins Radar holen.
+# [[firma]]
+# name = "Alvarez & Marsal"
+# system = "talemetry"
+# basis = "https://careers.alvarezandmarsal.com"
+# suche = ["Frankfurt"]
 
 [[firma]]
 name = "Kroll"

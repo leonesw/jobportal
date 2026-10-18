@@ -460,6 +460,11 @@ def arten_aus_text(text: str) -> set[str]:
     return arten
 
 
+# "Vollzeit oder Teilzeit", "Teil- oder Vollzeit", "Voll/Teilzeit", "part/full-time" im Titel
+_TEILZEIT_IM_TITEL = re.compile(r"teilzeit|\bteil (?:oder |und |bzw )?vollzeit|\bpart (?:or |and )?(?:full )?time\b")
+_VOLLZEIT_IM_TITEL = re.compile(r"vollzeit|\bvoll (?:oder |und |bzw )?teilzeit|\bfull time\b")
+
+
 def bestimme_arten(arten: set[str], titel_norm: str) -> list[str]:
     def hat(art: str) -> bool:
         return bool(ART_MUSTER[art].search(titel_norm))
@@ -471,6 +476,10 @@ def bestimme_arten(arten: set[str], titel_norm: str) -> list[str]:
     if "Werkstudent" in arten:
         return ["Werkstudent"]
     ergebnis = set(arten)
+    if _TEILZEIT_IM_TITEL.search(titel_norm):
+        ergebnis.add("Teilzeit")
+    if _VOLLZEIT_IM_TITEL.search(titel_norm):
+        ergebnis.add("Vollzeit")
     if hat("Trainee"):
         ergebnis.discard("Praktikum")
         ergebnis.add("Trainee")
@@ -547,12 +556,25 @@ _BUNDESLAENDER = (r"hesse|hessen|bavaria|bayern|baden[- ]w(?:ü|u|ue)rttemberg|n
                   r"mecklenburg[- ]vorpommern|saxony[- ]anhalt|sachsen[- ]anhalt")
 
 
+# "Frankfurt", "Frankfurt a. M.", "Frankfurt/Main" … – aber nicht Frankfurt (Oder)
+_FRANKFURT_AM_MAIN = re.compile(r"frankfurt(?:\s*(?:am\s+main|a\.?\s*m(?:ain)?\.?|/\s*m(?:ain)?\.?|\(\s*main\s*\)))?", re.I)
+
+
 def ort_anzeige(ort: str) -> str:
     """"Frankfurt, Hesse, Germany" / "Germany - Frankfurt" → nur der Ort (für die Anzeige)."""
     kurz = re.sub(r"[\s,]+(?:germany|deutschland|deu|de|allemagne)\s*$", "", ort.strip(), flags=re.I)
     kurz = re.sub(r"^\s*(?:germany|deutschland|deu)\s*[-–,:]\s*", "", kurz, flags=re.I).strip(" ,")
     kurz = re.sub(rf",\s*(?:{_BUNDESLAENDER})\s*$", "", kurz, flags=re.I).strip(" ,")
-    return kurz or ort.strip()
+    if re.fullmatch(r"germany|deutschland|deu", kurz, flags=re.I):
+        return "Deutschland"
+    if _FRANKFURT_AM_MAIN.fullmatch(kurz):
+        return "Frankfurt am Main"
+    return _DEUTSCHE_NAMEN.get(kurz.lower(), kurz) or ort.strip()
+
+
+# Englische Städtenamen deutscher Standorte (Greenhouse, Workday …)
+_DEUTSCHE_NAMEN = {"munich": "München", "cologne": "Köln", "dusseldorf": "Düsseldorf", "duesseldorf": "Düsseldorf",
+                   "nuremberg": "Nürnberg", "hanover": "Hannover", "brunswick": "Braunschweig"}
 
 
 def ist_ausgeschlossen(text_norm: str, cfg: dict) -> bool:
@@ -1261,7 +1283,8 @@ def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter, proben:
     stelle = {
         "id": kurz_id(f"{herkunft}|{e['id']}", "fs-"),
         "titel": titel,
-        "firma": e.get("firma") or firma["name"],
+        # Angezeigt wird der Name aus firmen.toml (nicht Unterfirmen wie "60 TWS" bei Nexia)
+        "firma": firma["name"],
         "ort": ort,
         "plz": "",
         "regionen": regionen,
@@ -1522,6 +1545,10 @@ def main() -> None:
     neu_dabei = erfolgreich - bekannt
     stellen, neu = fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei,
                                    jetzt, heute, cfg)
+    # Davon von Firmen, die gerade erst in firmen.toml aufgenommen wurden
+    neu_von_neuen_firmen = sum(1 for sid, s in stellen.items()
+                               if s.get("herkunft", "ba") != "ba" and s["herkunft"] in neu_dabei
+                               and sid not in alte_stellen and not s.get("alt"))
 
     ohne_ort = sum(1 for s in stellen.values() if not s.get("ort"))
     ohne_stufe = Counter(s["titel"] for s in stellen.values() if s.get("stufen") == [OHNE_STUFE])
@@ -1578,7 +1605,9 @@ def main() -> None:
         f"Schnittstelle `{endpunkt or 'keine erreichbar'}`, Dauer {dauer_ba:.0f} s",
         f"- Karriereseiten: **{firmen_status}** – {len(firmen_bericht)} Firmen, {firmen_fehler} nicht erreichbar, "
         f"{aus_firmen} Stellen im Radar (davon {doppelt} auch bei der Arbeitsagentur), Dauer {dauer - dauer_ba:.0f} s",
-        f"- Stellen im Radar: **{len(stellen)}**, davon neu in diesem Lauf: **{neu}**, ohne Ortsangabe: {ohne_ort}",
+        f"- Stellen im Radar: **{len(stellen)}**, davon neu in diesem Lauf: **{neu}**"
+        + (f" ({neu_von_neuen_firmen} davon von neu aufgenommenen Firmen)" if neu_von_neuen_firmen else "")
+        + f", ohne Ortsangabe: {ohne_ort}",
         f"- Verworfene Titel (Arbeitsagentur): {len(beispiele['kein_bereich'])} ohne passenden Bereich, "
         f"{len(beispiele['ausgeschlossen'])} durch die Ausschlussliste, {statistik['unlesbar']} unlesbare Einträge",
         "- Nach Bereich: " + (", ".join(f"{b} {n}" for b, n in bereich_zahlen.most_common()) or "–"),
