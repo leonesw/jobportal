@@ -128,7 +128,7 @@ begriffe = [
 "Transaction Services / FDD" = [
   "transaction services", "transaction advisory", "financial due diligence",
   "diligence", "transaktionsberatung", "deal advisory", "deals",
-  "deal management", "deal execution", "deal analytics", "transaction accounting",
+  "deal management", "deal execution", "deal analytics", "deal strategy", "transaction accounting",
   "spa advice", "financial advisory", "fdd",
 ]
 "Restrukturierung" = [
@@ -184,8 +184,8 @@ woerter = [
   "initiativ", "initativ", "unsolicited", "general application",
   "talentpool", "talent pool", "deal maker",
   # Reine Steuer-Spezialisierungen, die sonst unter M&A oder TS landen
-  "m&a tax", "deals tax", "transfer pricing", "verrechnungspreis",
-  "internationales steuerrecht",
+  "m&a tax", "deals tax", "transaction tax", "transactions tax",
+  "transfer pricing", "verrechnungspreis", "internationales steuerrecht",
   # Studienprogramme für Schulabgänger
   "duales studium", "dualer student", "bachelor-studium",
 ]

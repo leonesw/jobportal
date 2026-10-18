@@ -22,6 +22,7 @@ from __future__ import annotations
 import email.utils
 import gzip
 import hashlib
+import html
 import json
 import os
 import re
@@ -116,7 +117,8 @@ STUFEN_REGELN = [
     ("Senior", r"\bseniors?\b|\bsnr\b|\bsr\b|referent|spezialist|specialist|experienced|"
                r"erfahren|\bexpert|\bwirtschaftspruefer(?:in)?\b|\bsteuerberater(?:in)?\b|"
                r"\brevisor(?:in)?\b"),
-    ("Berufseinstieg", r"\bassociates?\b|\bconsultants?\b|\banalysts?\b|\bassistants?\b|assistent"),
+    ("Berufseinstieg", r"\bassociates?\b|\bconsultants?\b|\banalysts?\b|\bassistants?\b|assistent|"
+                       r"\bberater(?:in)?\b"),
 ]
 
 # Anwalts-Berufe (siehe einstellungen.toml) schließen Stellen in diesen Bereichen nicht aus:
@@ -292,6 +294,30 @@ def datum_aus_relativ(text: str, heute: date) -> date | None:
     if treffer:
         return heute - timedelta(days=int(treffer[1]))
     return None
+
+
+_MONATE = {"jan": 1, "feb": 2, "mar": 3, "mär": 3, "apr": 4, "may": 5, "mai": 5, "jun": 6, "jul": 7,
+           "aug": 8, "sep": 9, "oct": 10, "okt": 10, "nov": 11, "dec": 12, "dez": 12}
+
+
+def datum_text(text: str) -> date | None:
+    """"Oct 9, 2026" oder "9. Okt. 2026" (Monatsnamen auf Englisch oder Deutsch)."""
+    t = (text or "").strip().lower()
+    treffer = (re.search(r"([a-zä]{3})[a-zä]*\.?\s+(\d{1,2}),?\s+(\d{4})", t)
+               or re.search(r"(\d{1,2})\.?\s+([a-zä]{3})[a-zä]*\.?\s+(\d{4})", t))
+    if not treffer:
+        return als_datum(text)
+    teile = treffer.groups()
+    monat, tag = (teile[0], teile[1]) if teile[0].isalpha() else (teile[1], teile[0])
+    try:
+        return date(int(teile[2]), _MONATE[monat[:3]], int(tag))
+    except (KeyError, ValueError):
+        return None
+
+
+def ohne_tags(text: str) -> str:
+    """HTML-Schnipsel als einfacher Text."""
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", text or "")).replace("\xa0", " ")).strip()
 
 
 def als_zahl(wert, ersatz: int = 0) -> int:
@@ -515,10 +541,17 @@ def ordne_regionen(orte: list[str], cfg: dict) -> tuple[list[str], str, list[str
     return [r for r in reihenfolge if r in regionen], (sichtbar or [""])[0], sichtbar[1:21]
 
 
+_BUNDESLAENDER = (r"hesse|hessen|bavaria|bayern|baden[- ]w(?:ü|u|ue)rttemberg|north rhine[- ]westphalia|"
+                  r"nordrhein[- ]westfalen|rhineland[- ]palatinate|rheinland[- ]pfalz|lower saxony|niedersachsen|"
+                  r"saxony|sachsen|thuringia|thüringen|saarland|schleswig[- ]holstein|brandenburg|"
+                  r"mecklenburg[- ]vorpommern|saxony[- ]anhalt|sachsen[- ]anhalt")
+
+
 def ort_anzeige(ort: str) -> str:
-    """"Frankfurt am Main, Germany" / "Germany - Frankfurt" → nur der Ort (für die Anzeige)."""
+    """"Frankfurt, Hesse, Germany" / "Germany - Frankfurt" → nur der Ort (für die Anzeige)."""
     kurz = re.sub(r"[\s,]+(?:germany|deutschland|deu|de|allemagne)\s*$", "", ort.strip(), flags=re.I)
     kurz = re.sub(r"^\s*(?:germany|deutschland|deu)\s*[-–,:]\s*", "", kurz, flags=re.I).strip(" ,")
+    kurz = re.sub(rf",\s*(?:{_BUNDESLAENDER})\s*$", "", kurz, flags=re.I).strip(" ,")
     return kurz or ort.strip()
 
 
@@ -1056,6 +1089,110 @@ def quelle_successfactors(firma: dict, heute: date) -> list[dict]:
     return ergebnis
 
 
+def quelle_oracle(firma: dict, heute: date) -> list[dict]:
+    """Oracle Recruiting Cloud (z. B. Kroll): öffentliche Schnittstelle der Bewerberseite."""
+    host, seite = firma["host"], firma.get("seite", "CX_1")
+    basis = f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+    ergebnis, offset = [], 0
+    for _ in range(20):  # höchstens 4000 Stellen
+        antwort = abrufen(f"{basis}?onlyData=true&expand=requisitionList.secondaryLocations&finder=findReqs;"
+                          f"siteNumber={seite},limit=200,offset={offset},sortBy=POSTING_DATES_DESC")
+        block = (antwort.get("items") or [{}])[0]
+        liste = block.get("requisitionList") or []
+        for r in liste:
+            orte = [r.get("PrimaryLocation") or ""] + [s.get("Name") or "" for s in r.get("secondaryLocations") or []]
+            ergebnis.append({
+                "id": str(r.get("Id")),
+                "titel": r.get("Title") or "",
+                "firma": firma["name"],
+                "orte": [o for o in orte if o],
+                "datum": als_datum(r.get("PostedDate")),
+                "link": f"https://{host}/hcmUI/CandidateExperience/de/sites/{seite}/job/{r.get('Id')}",
+                "hinweise": [r.get("JobFamily") or "", r.get("JobFunction") or ""],
+                "arten": arten_aus_text(f"{r.get('JobSchedule') or ''} {r.get('JobType') or ''}"),
+                "stufe": stufe_aus_system(r.get("ManagerLevel") or ""),
+            })
+        offset += len(liste)
+        time.sleep(PAUSE_SEKUNDEN)
+        if not liste or offset >= als_zahl(block.get("TotalJobsCount"), 0):
+            break
+    return ergebnis
+
+
+def quelle_talemetry(firma: dict, heute: date) -> list[dict]:
+    """Stellensuche als Webseite (Talemetry/Jobvite, z. B. Alvarez & Marsal), 25 Stellen je Seite."""
+    basis = firma["basis"].rstrip("/")
+    gefunden: dict[str, dict] = {}
+    for ort in firma.get("suche") or [""]:
+        for nummer in range(1, 21):
+            parameter = {"location": ort, **({"page": nummer} if nummer > 1 else {})}
+            seite = abrufen(f"{basis}/search/jobs?{urllib.parse.urlencode(parameter)}", art="text")
+            bloecke = seite.split('class="jobs-section__item')[1:]
+            for block in bloecke:
+                a = re.search(r'<a href="([^"]*/jobs/(\d+)[^"]*)"[^>]*>(.*?)</a>', block, re.S)
+                if not a:
+                    continue
+                ort_m = re.search(r"Location:\s*</span>(.*?)</div>", block, re.S)
+                datum_m = re.search(r"Date Posted:\s*</span>(.*?)</div>", block, re.S)
+                typ_m = re.search(r"JobType:\s*([^<\n]*)", block)
+                einheit_m = re.search(r"BusinessUnit:\s*([^<\n]*)", block)
+                gefunden[a.group(2)] = {
+                    "id": a.group(2),
+                    "titel": ohne_tags(a.group(3)),
+                    "firma": firma["name"],
+                    "orte": [ohne_tags(ort_m.group(1))] if ort_m else [],
+                    "datum": datum_text(ohne_tags(datum_m.group(1))) if datum_m else None,
+                    "link": html.unescape(a.group(1)),
+                    "hinweise": [einheit_m.group(1).strip()] if einheit_m else [],
+                    "arten": arten_aus_text(typ_m.group(1)) if typ_m else set(),
+                    "stufe": None,
+                }
+            time.sleep(PAUSE_SEKUNDEN)
+            if len(bloecke) < 25:
+                break
+    return list(gefunden.values())
+
+
+def quelle_ebnerstolz(firma: dict, heute: date) -> list[dict]:
+    """Stellenliste von Ebner Stolz: je Standort und Fachbereich gefiltert (höchstens 20 je Abfrage)."""
+    basis = firma.get("basis", "https://www.ebnerstolz.de").rstrip("/")
+    seite = abrufen(f"{basis}/de/karriere/stellenangebote/", art="text")
+    tag = re.search(r'<[^>]*data-live-name-value="element_vacancy_list"[^>]*>', seite)
+    props = tag and re.search(r'data-live-props-value="([^"]*)"', tag.group(0))
+    if not props:
+        raise ValueError("Stellenliste nicht gefunden – hat sich der Aufbau der Seite geändert?")
+    props = html.unescape(props.group(1))
+    gefunden: dict[str, dict] = {}
+    for code, ortsname in (firma.get("standorte") or {"60325": "Frankfurt am Main"}).items():
+        for fach in firma.get("fachbereiche") or [""]:
+            auswahl = {"selectedLocations": [code], **({"selectedSubjects": [fach]} if fach else {})}
+            abfrage = urllib.parse.urlencode({"props": props, "updated": json.dumps(auswahl)})
+            antwort = abrufen(f"{basis}/_components/element_vacancy_list?{abfrage}", art="text",
+                              kopf={"Accept": "application/vnd.live-component+html"})
+            for gruppe in re.split(r"(?=<li\s[^>]*is_vacancy_group[\s\"])", antwort)[1:]:
+                kopf = re.search(r"<h4[^>]*>(.*?)</h4>", gruppe, re.S)
+                bereich = ohne_tags(kopf.group(1)) if kopf else ""
+                for a in re.finditer(r'<a href="([^"]*-v(\d+)\.html)"[^>]*>(.*?)</a>', gruppe, re.S):
+                    span = re.search(r"<span[^>]*>(.*?)</span>", a.group(3), re.S)
+                    stelle = gefunden.setdefault(a.group(2), {
+                        "id": a.group(2),
+                        "titel": ohne_tags(span.group(1) if span else a.group(3)),
+                        "firma": firma["name"],
+                        "orte": [],
+                        "datum": None,
+                        "link": urllib.parse.urljoin(basis + "/", html.unescape(a.group(1))),
+                        "hinweise": [],
+                        "arten": set(),
+                        "stufe": None,
+                    })
+                    if ortsname not in stelle["orte"]:
+                        stelle["orte"].append(ortsname)
+                    if bereich and bereich not in stelle["hinweise"]:
+                        stelle["hinweise"].append(bereich)
+            time.sleep(PAUSE_SEKUNDEN)
+    return list(gefunden.values())
+
+
 QUELLEN = {
     "personio": quelle_personio,
     "recruitee": quelle_recruitee,
@@ -1065,6 +1202,9 @@ QUELLEN = {
     "rss": quelle_rss,
     "nextjs": quelle_nextjs,
     "successfactors": quelle_successfactors,
+    "oracle": quelle_oracle,
+    "talemetry": quelle_talemetry,
+    "ebnerstolz": quelle_ebnerstolz,
 }
 
 

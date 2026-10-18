@@ -18,6 +18,9 @@
 #    nextjs     url (Stellensuche mit eingebetteten Daten)
 #    successfactors  feed (Stellen-Feed für Jobbörsen, ".../feed/<Nummer>"),
 #               ohne_marken (optional, z. B. eine Anwaltsgesellschaft)
+#    oracle     host, seite (Oracle Recruiting Cloud, z. B. Kroll)
+#    talemetry  basis, suche (Stellensuche als Webseite, z. B. A&M)
+#    ebnerstolz standorte, fachbereiche (nur für Ebner Stolz)
 #
 #  "bereiche" (optional) gilt nur, wenn der Stellentitel selbst
 #  keinen Bereich erkennen lässt – für Boutiquen mit Titeln wie
@@ -67,6 +70,22 @@ feeds = [
 name = "Forvis Mazars"
 system = "nextjs"
 url = "https://karriere-de.forvismazars.com/stellensuche"
+
+# Stellenliste von ebnerstolz.de, nur Frankfurt (kein Büro in Rhein-Neckar),
+# nur Fachbereiche aus deinem Suchfeld. Codes stehen im Filter der Webseite.
+[[firma]]
+name = "Ebner Stolz"
+aliase = ["RSM Ebner Stolz"]
+system = "ebnerstolz"
+standorte = { "60325" = "Frankfurt am Main" }
+fachbereiche = [
+  "MC_UNTERNEHMENSSTEUERUNG_SUB",           # Restrukturierung
+  "MC_CORPORATE_FINANCE_M_A_ADVISORY_SUB",  # Corporate Finance / M&A Advisory
+  "WP_TRANSACTION_ADVISORY_SERVICES_SUB",   # Transaction Advisory Services
+  "WP_WIRTSCHAFTSPRUEFUNG_SUB",             # Wirtschaftsprüfung
+  "WP_FINANCIAL_SERVICES_SUB",              # Wirtschaftsprüfung Financial Services
+  "WP_GOVERNANCE_RISK_COMPLIANCE_SUB",      # Governance, Risk & Compliance
+]
 
 [[firma]]
 name = "FALK"
@@ -130,6 +149,31 @@ konto = "kbht"
 name = "bw partner"
 system = "personio"
 konto = "bw-partner-partnerschaft-mbb"
+
+
+# --------------------------------------------------------------
+#  Große Restrukturierungs- und Transaktionsberatungen
+# --------------------------------------------------------------
+
+[[firma]]
+name = "Alvarez & Marsal"
+system = "talemetry"
+basis = "https://careers.alvarezandmarsal.com"
+suche = ["Frankfurt"]
+
+[[firma]]
+name = "Kroll"
+system = "oracle"
+host = "hcxs.fa.us2.oraclecloud.com"
+seite = "CX_1"
+
+[[firma]]
+name = "AlixPartners"
+system = "greenhouse"
+konto = "alixpartners"
+
+# FTI Consulting: Die Stellenplattform zeigt derzeit keine Stellen.
+# BDO: keine offene Stellenliste (nur interne Suche mit Zugangsschlüssel).
 
 
 # --------------------------------------------------------------
