@@ -16,6 +16,8 @@
 #    phenom     basis, sprache, land, jobpfad
 #    rss        feeds (RSS-Adressen, je mit Ort)
 #    nextjs     url (Stellensuche mit eingebetteten Daten)
+#    successfactors  feed (Stellen-Feed für Jobbörsen, ".../feed/<Nummer>"),
+#               ohne_marken (optional, z. B. eine Anwaltsgesellschaft)
 #
 #  "bereiche" (optional) gilt nur, wenn der Stellentitel selbst
 #  keinen Bereich erkennen lässt – für Boutiquen mit Titeln wie
@@ -43,6 +45,15 @@ basis = "https://jobs.pwc.de"
 sprache = "de_de"
 land = "de"
 jobpfad = "/de/de/job/"
+
+# Stellen-Feed für Jobbörsen von jobs.kpmg.de (laut robots.txt erlaubt),
+# mit allen Standorten je Stelle. KPMG Law (Anwälte) bleibt draußen.
+[[firma]]
+name = "KPMG"
+aliase = ["KPMG AG Wirtschaftsprüfungsgesellschaft"]
+system = "successfactors"
+feed = "https://jobs.kpmg.de/feed/289301"
+ohne_marken = ["kpmgLAW"]
 
 [[firma]]
 name = "Grant Thornton"
@@ -89,10 +100,6 @@ name = "BRB Appel & Partner"
 system = "personio"
 konto = "brbappel-partner"
 
-[[firma]]
-name = "AWP Gruppe"
-system = "personio"
-konto = "awp-gruppe"
 
 [[firma]]
 name = "PKF Wulf Gruppe"
@@ -219,12 +226,6 @@ system = "personio"
 konto = "concentro-management-ag-1"
 bereiche = ["Restrukturierung"]
 
-[[firma]]
-name = "Haselhorst Associates"
-system = "personio"
-konto = "haselhorst"
-bereiche = ["Restrukturierung"]
-
 
 # --------------------------------------------------------------
 #  Private Equity und Beteiligungen
@@ -244,14 +245,10 @@ system = "personio"
 konto = "primecapital-ag"
 bereiche = ["Private Equity"]
 
-[[firma]]
-name = "HYSTAKE"
-system = "personio"
-konto = "hystake"
-bereiche = ["Private Equity"]
+# Karriereseite noch nicht gefunden (Personio-Konto "hystake" gibt es nicht):
+# [[firma]]
+# name = "HYSTAKE"
+# system = "personio"
+# konto = "hystake"
+# bereiche = ["Private Equity"]
 
-[[firma]]
-name = "Afinum"
-system = "personio"
-konto = "afinum-management-gmbh"
-bereiche = ["Private Equity"]

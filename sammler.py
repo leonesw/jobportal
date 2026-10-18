@@ -20,6 +20,7 @@ Benötigt nur Python 3.11 oder neuer, keine Zusatzpakete.
 from __future__ import annotations
 
 import email.utils
+import gzip
 import hashlib
 import json
 import os
@@ -111,12 +112,16 @@ STUFEN_REGELN = [
     ("Director & Partner", r"\bpartner(?:in)?\b|\bdirector\b|\bdirektor(?:in)?\b|head of|"
                            r"\bleiter(?:in)?\b|\bleitung\b|abteilungsleit|bereichsleit|"
                            r"geschaeftsfuehr|vice president|\bvp\b|\bprincipal\b|\bchief\b"),
-    ("Manager", r"\bmanager(?:in)?\b|teamleit|gruppenleit|projektleit|team lead"),
-    ("Senior", r"\bsenior\b|\bsnr\b|\bsr\b|referent|spezialist|specialist|experienced|"
+    ("Manager", r"\bmanager(?:in|s)?\b|teamleit|gruppenleit|projektleit|team lead"),
+    ("Senior", r"\bseniors?\b|\bsnr\b|\bsr\b|referent|spezialist|specialist|experienced|"
                r"erfahren|\bexpert|\bwirtschaftspruefer(?:in)?\b|\bsteuerberater(?:in)?\b|"
                r"\brevisor(?:in)?\b"),
-    ("Berufseinstieg", r"\bassociate\b|\bconsultant\b|\banalyst\b|\bassistant\b|assistent"),
+    ("Berufseinstieg", r"\bassociates?\b|\bconsultants?\b|\banalysts?\b|\bassistants?\b|assistent"),
 ]
+
+# Anwalts-Berufe (siehe einstellungen.toml) schließen Stellen in diesen Bereichen nicht aus:
+# Die Arbeitsagentur ordnet z. B. Internal-Audit-Stellen von Beratungen als "Jurist" ein.
+BERUF_EGAL_BEI = {"Interne Revision", "Wirtschaftsprüfung"}
 _STUFEN_REGELN = [(stufe, re.compile(muster)) for stufe, muster in STUFEN_REGELN]
 _OPTIONAL_SENIOR = re.compile(r"\(\s*(?:senior|sr|snr)\.?\s*-?\s*\)")
 _OPTIONAL_JUNIOR = re.compile(r"\(\s*(?:junior|jr)\.?\s*-?\s*\)")
@@ -169,7 +174,7 @@ GENDER_MUSTER = re.compile(
 
 
 def umlaute(text: str) -> str:
-    t = (text or "").lower()
+    t = re.sub(r"[​‌‍⁠﻿­]", "", (text or "").lower())  # unsichtbare Zeichen
     for alt, neu in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
         t = t.replace(alt, neu)
     return t
@@ -184,7 +189,35 @@ def normalisiere(text: str) -> str:
 def bereinige_titel(titel: str) -> str:
     t = GENDER_MUSTER.sub(" ", titel or "")
     t = re.sub(r"\s+", " ", t).strip()
-    return re.sub(r"[\s\-–—|,:/]+$", "", t).strip()
+    t = re.sub(r"\s+([,;:])", r"\1", t)  # "Senior Consultant Audit , Frankfurt" → "…Audit, Frankfurt"
+    t = re.sub(r",(?=[A-Za-zÄÖÜäöü])", ", ", t)  # "Frankfurt,Nürnberg" → "Frankfurt, Nürnberg"
+    return schreibweise(re.sub(r"[\s\-–—|,:/]+$", "", t).strip())
+
+
+# Abkürzungen, die in GROSSBUCHSTABEN bleiben
+AKRONYME = {"M&A", "IT", "HR", "PE", "VP", "CFO", "CEO", "COO", "CRO", "KPI", "ERP", "SAP", "ESG", "IFRS", "HGB",
+            "US", "UK", "EU", "AG", "SE", "GMBH", "KPMG", "PWC", "EY", "BDO", "FDD", "TS", "IKS", "IPO", "DCM", "ECM",
+            "PMI", "PMO", "AI", "KI", "CSRD", "BI", "FS", "DACH", "CF", "MBA", "CPA", "WP", "STB"}
+_KLEINE_WOERTER = {"and", "or", "of", "the", "as", "a", "an", "in", "im", "for", "to", "und", "oder", "der", "die",
+                   "das", "den", "für", "fuer", "mit", "bei", "am", "zum", "zur", "von", "ab"}
+
+
+def schreibweise(titel: str) -> str:
+    """"ANALYST – CORPORATE FINANCE" → "Analyst – Corporate Finance". Abkürzungen bleiben."""
+    buchstaben = [z for z in titel if z.isalpha()]
+    gross = sum(z.isupper() for z in buchstaben)
+    if not buchstaben or gross < 0.6 * len(buchstaben):
+        # Gemischte Schreibweise: nur lange Wörter in Großbuchstaben ändern ("SENIOR MANAGER – Turnaround")
+        return re.sub(r"\b[A-ZÄÖÜ]{5,}\b", lambda m: m.group(0) if m.group(0) in AKRONYME else m.group(0).capitalize(), titel)
+
+    def wort(m):
+        w = m.group(0)
+        if w.upper() in AKRONYME:
+            return w.upper()
+        if w.lower() in _KLEINE_WOERTER and m.start() > 0:
+            return w.lower()
+        return w.capitalize()
+    return re.sub(r"[A-Za-zÄÖÜäöüß&]+", wort, titel)
 
 
 def erstes(daten: dict, *schluessel):
@@ -275,7 +308,7 @@ def kurz_id(text: str, praefix: str = "ba-") -> str:
 def abrufen(url: str, methode: str = "GET", daten=None, kopf: dict | None = None,
             art: str = "json", versuche: int = 3):
     """Lädt eine Adresse; wiederholt bei vorübergehenden Fehlern."""
-    header = {**WEB_HEADER, **(kopf or {})}
+    header = {**WEB_HEADER, "Accept-Encoding": "gzip", **(kopf or {})}  # gepackt: weniger Last für die Seiten
     rumpf = None
     if daten is not None:
         rumpf = json.dumps(daten).encode("utf-8")
@@ -287,6 +320,9 @@ def abrufen(url: str, methode: str = "GET", daten=None, kopf: dict | None = None
         try:
             with urllib.request.urlopen(anfrage, timeout=30) as antwort:
                 inhalt = antwort.read()
+                kodierung = (getattr(antwort, "headers", None) or {}).get("Content-Encoding", "")
+            if kodierung.lower() == "gzip" or inhalt[:2] == b"\x1f\x8b":
+                inhalt = gzip.decompress(inhalt)
             text = inhalt.decode("utf-8", errors="replace")
             return json.loads(text) if art == "json" else text
         except urllib.error.HTTPError as fehler:
@@ -326,6 +362,8 @@ def lade_einstellungen() -> dict:
     ausschluss_roh = roh.get("ausschluss", {})
     ausschluss = [normalisiere(w) for w in ausschluss_roh.get("woerter", [])]
     berufe = [normalisiere(w) for w in ausschluss_roh.get("berufe", [])]
+    ausnahmen = sorted({normalisiere(w) for w in ausschluss_roh.get("ausnahmen", []) if normalisiere(w)},
+                       key=len, reverse=True)
     firmen_cfg = roh.get("firmen", {})
 
     if not regionen or not begriffe or not bereiche:
@@ -345,6 +383,8 @@ def lade_einstellungen() -> dict:
         "bereiche": bereiche,
         "ausschluss": [w for w in ausschluss if w],
         "ausschluss_berufe": [w for w in berufe if w],
+        "ausnahmen": ausnahmen,
+        "ort_woerter": sorted({o for r in regionen for o in r["orte_norm"]}, key=len, reverse=True),
         "remote": bool(firmen_cfg.get("remote_einbeziehen", True)),
         "remote_region": str(firmen_cfg.get("remote_region", "Bundesweit / Remote")),
         "firmen": firmen,
@@ -368,9 +408,10 @@ def finde_bereiche(text: str, bereiche: list) -> list[str]:
     for name, woerter in bereiche:
         gefunden = False
         for wort in woerter:
-            if wort in rest:
+            muster = f" {wort} " if len(wort) <= 3 else wort  # kurze Wörter ("IKS", "FDD") nur als ganzes Wort
+            if muster in rest:
                 gefunden = True
-                rest = rest.replace(wort, " ")
+                rest = rest.replace(muster, " ")
         if gefunden:
             treffer.append(name)
     return treffer
@@ -397,13 +438,10 @@ def bestimme_arten(arten: set[str], titel_norm: str) -> list[str]:
     def hat(art: str) -> bool:
         return bool(ART_MUSTER[art].search(titel_norm))
 
-    # Der Titel hat Vorrang vor den Angaben der Bewerbersysteme
-    if hat("Werkstudent"):
-        return ["Werkstudent"]
-    if hat("Abschlussarbeit"):
-        return ["Abschlussarbeit"]
-    if hat("Praktikum"):
-        return ["Praktikum"]
+    # Der Titel hat Vorrang vor den Angaben der Bewerbersysteme ("Praktikant/Werkstudent" = beides)
+    aus_titel = [a for a in ("Werkstudent", "Praktikum", "Abschlussarbeit") if hat(a)]
+    if aus_titel:
+        return aus_titel
     if "Werkstudent" in arten:
         return ["Werkstudent"]
     ergebnis = set(arten)
@@ -478,9 +516,29 @@ def ordne_regionen(orte: list[str], cfg: dict) -> tuple[list[str], str, list[str
 
 
 def ort_anzeige(ort: str) -> str:
-    """"Frankfurt am Main, Germany" → "Frankfurt am Main" (nur für die Anzeige)."""
-    kurz = re.sub(r"[\s,]+(?:germany|deutschland|deu|de|allemagne)\s*$", "", ort.strip(), flags=re.I).strip(" ,")
+    """"Frankfurt am Main, Germany" / "Germany - Frankfurt" → nur der Ort (für die Anzeige)."""
+    kurz = re.sub(r"[\s,]+(?:germany|deutschland|deu|de|allemagne)\s*$", "", ort.strip(), flags=re.I)
+    kurz = re.sub(r"^\s*(?:germany|deutschland|deu)\s*[-–,:]\s*", "", kurz, flags=re.I).strip(" ,")
     return kurz or ort.strip()
+
+
+def ist_ausgeschlossen(text_norm: str, cfg: dict) -> bool:
+    """Ausschlussliste prüfen; Ausnahmen wie "Prüfungsassistenz" zählen nicht als "Assistenz"."""
+    for ausnahme in cfg["ausnahmen"]:
+        text_norm = text_norm.replace(ausnahme, " ")
+    return any(w in text_norm for w in cfg["ausschluss"])
+
+
+def titel_schluessel(titel: str, cfg: dict) -> str:
+    """Titel ohne Ortsnamen ("Senior Consultant Audit, Frankfurt") – zum Erkennen von Dubletten."""
+    t = f" {normalisiere(titel)} "
+    for wort in cfg["ort_woerter"]:
+        t = t.replace(f" {wort} ", " ")
+    return " ".join(w for w in t.split() if w not in _FUELLWOERTER)
+
+
+_FUELLWOERTER = {"am", "main", "a", "m", "in", "im", "standort", "standorte", "bundesweit", "remote", "hybrid",
+                 "germany", "deutschland", "oder", "und", "or", "and", "fuer", "for"}
 
 
 # --- Abruf bei der Arbeitsagentur ------------------------------------------------
@@ -685,14 +743,18 @@ def verarbeite(roh, region, art, cfg, treffer, statistik, beispiele):
     # Die Ausschlussliste gilt für den Titel. Den von der BA zugeordneten Beruf
     # prüfen wir nur gegen die Berufe-Liste (z. B. Rechtsanwalt) – die Zuordnung
     # der BA ist sonst oft ungenau (z. B. "Internal Auditor" als Qualitäts-Auditor).
-    if any(w in titel_norm for w in cfg["ausschluss"]) or any(w in beruf_norm for w in cfg["ausschluss_berufe"]):
+    if ist_ausgeschlossen(titel_norm, cfg):
         beispiele["ausgeschlossen"][stelle["titel"]] += 1
         return
 
     bereiche = finde_bereiche(titel_norm, cfg["bereiche"])
+    if (any(w in beruf_norm for w in cfg["ausschluss_berufe"])
+            and not set(bereiche) & BERUF_EGAL_BEI):  # Prüfung/Revision ist keine Anwaltsstelle
+        beispiele["ausgeschlossen"][f"{stelle['titel']} [Beruf: {stelle['beruf']}]"] += 1
+        return
     if not bereiche and stelle["beruf"]:
         if any(w in beruf_norm for w in cfg["ausschluss"]):
-            beispiele["ausgeschlossen"][stelle["titel"]] += 1
+            beispiele["ausgeschlossen"][f"{stelle['titel']} [Beruf: {stelle['beruf']}]"] += 1
             return
         bereiche = finde_bereiche(beruf_norm, cfg["bereiche"])
     if not bereiche:
@@ -891,7 +953,8 @@ def quelle_phenom(firma: dict, heute: date) -> list[dict]:
                 "orte": [o for o in orte if o],
                 "datum": als_datum(j.get("postedDate") or j.get("dateCreated")),
                 "link": j.get("jobUrl") or f"{basis}{firma.get('jobpfad', '/job/')}{nummer}",
-                "hinweise": [j.get("category") or ""] + list(j.get("multi_category") or []),
+                # Die Kategorie (Assurance, Deals, Tax …) ist zu grob, um den Bereich daraus abzulesen
+                "hinweise": [],
                 "arten": arten_aus_text(j.get("type") or ""),
                 "stufe": stufe_aus_system(j.get("grade")),
             })
@@ -936,6 +999,8 @@ def quelle_nextjs(firma: dict, heute: date) -> list[dict]:
     ergebnis = []
     for j in stellen:
         orte = j.get("displayedCities") or [suche_tief(c, ("name", "title", "city")) for c in j.get("cities") or []]
+        if isinstance(orte, str):  # "Berlin; Frankfurt am Main"
+            orte = [orte]
         if not orte and j.get("city"):
             orte = [suche_tief(j["city"], ("name", "title", "city")) or str(j["city"])]
         stufen = [stufe_aus_system(suche_tief(x, ("name", "title", "label")) if isinstance(x, dict) else x)
@@ -955,6 +1020,42 @@ def quelle_nextjs(firma: dict, heute: date) -> list[dict]:
     return ergebnis
 
 
+def datum_sf(text: str) -> date | None:
+    """SuccessFactors-Feed: "Thu, 24 08 2023 00:00:00 GMT" (Monat als Zahl)."""
+    treffer = re.search(r"(\d{1,2}) (\d{1,2}) (\d{4})", text or "")
+    if treffer:
+        try:
+            return date(int(treffer[3]), int(treffer[2]), int(treffer[1]))
+        except ValueError:
+            return None
+    return als_datum(text)
+
+
+def quelle_successfactors(firma: dict, heute: date) -> list[dict]:
+    """Stellen-Feed für Jobbörsen von SAP SuccessFactors (z. B. jobs.kpmg.de/feed/…).
+    Enthält alle Standorte einer Stelle (multicity), Fachbereich (shift) und Zielgruppe."""
+    wurzel = ET.fromstring(abrufen(firma["feed"], art="text").encode("utf-8"))
+    ohne_marken = {m.lower() for m in firma.get("ohne_marken", [])}
+    ergebnis = []
+    for job in wurzel.iter("job"):
+        if text_von(job, "brand").lower() in ohne_marken:  # z. B. die Anwaltsgesellschaft "kpmgLAW"
+            continue
+        link = text_von(job, "url")
+        orte = [o.strip() for o in text_von(job, "multicity").split(";") if o.strip()] or [text_von(job, "city")]
+        ergebnis.append({
+            "id": text_von(job, "AltID") or text_von(job, "ID") or link,
+            "titel": text_von(job, "title"),
+            "firma": firma["name"],
+            "orte": [o for o in orte if o],
+            "datum": datum_sf(text_von(job, "created")) or als_datum(text_von(job, "posteddate")),
+            "link": re.sub(r"\?feedId=\d+$", "", link),
+            "hinweise": [text_von(job, "shift")],
+            "arten": arten_aus_text(text_von(job, "shifttype")),
+            "stufe": stufe_aus_system(text_von(job, "department") or text_von(job, "customfield2")),
+        })
+    return ergebnis
+
+
 QUELLEN = {
     "personio": quelle_personio,
     "recruitee": quelle_recruitee,
@@ -963,6 +1064,7 @@ QUELLEN = {
     "phenom": quelle_phenom,
     "rss": quelle_rss,
     "nextjs": quelle_nextjs,
+    "successfactors": quelle_successfactors,
 }
 
 
@@ -970,15 +1072,26 @@ def herkunft_von(firma: dict) -> str:
     return f"{firma['system']}:{firma.get('konto') or firma.get('mandant') or normalisiere(firma['name']).replace(' ', '-')}"
 
 
-def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter) -> dict | None:
-    """Wendet Ausschlussliste, Bereiche, Regionen und Stufen auf eine Firmen-Stelle an."""
+def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter, proben: dict) -> dict | None:
+    """Wendet Regionen, Ausschlussliste, Bereiche und Stufen auf eine Firmen-Stelle an.
+    In `proben` landen Beispiele verworfener Stellen (für die Diagnose)."""
     titel = bereinige_titel(e["titel"])
     titel_norm = normalisiere(titel)
     if not titel or not e.get("link"):
         zaehler["unlesbar"] += 1
         return None
-    if any(w in titel_norm for w in cfg["ausschluss"]):
+
+    # Mehrere Orte in einem Feld ("Berlin; Frankfurt am Main") aufteilen
+    orte = [t.strip() for o in e.get("orte") or [] for t in re.split(r"\s*[;|\n]\s*", str(o)) if t.strip()]
+    orte = orte or ([firma["sitz"]] if firma.get("sitz") else [])
+    regionen, ort, weitere = ordne_regionen(orte, cfg)
+    if not regionen:
+        zaehler["ausserhalb"] += 1
+        proben["ausserhalb"].update(orte[:1] or ["(kein Ort)"])
+        return None
+    if ist_ausgeschlossen(titel_norm, cfg):
         zaehler["ausgeschlossen"] += 1
+        proben["ausgeschlossen"].append(titel)
         return None
 
     # Bereich aus dem Titel; sonst aus Abteilung/Kategorie der Anzeige (aber nicht für
@@ -1001,12 +1114,7 @@ def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter) -> dict
         bereiche = [b for b in firma["bereiche"] if b in bekannte]
     if not bereiche:
         zaehler["kein_bereich"] += 1
-        return None
-
-    orte = e.get("orte") or ([firma["sitz"]] if firma.get("sitz") else [])
-    regionen, ort, weitere = ordne_regionen(orte, cfg)
-    if not regionen:
-        zaehler["ausserhalb"] += 1
+        proben["kein_bereich"].append(titel)
         return None
 
     herkunft = herkunft_von(firma)
@@ -1053,17 +1161,22 @@ def sammle_firmen(cfg: dict, heute: date, protokoll: list) -> tuple[list[dict], 
             bericht.append(eintrag)
             continue
         zaehler = Counter()
+        proben = {"ausserhalb": Counter(), "ausgeschlossen": [], "kein_bereich": []}
         gesehen_ids = set()
         for e in roh:
             if e["id"] in gesehen_ids:
                 continue
             gesehen_ids.add(e["id"])
-            stelle = baue_firmenstelle(e, firma, cfg, zaehler)
+            stelle = baue_firmenstelle(e, firma, cfg, zaehler, proben)
             if stelle:
                 stellen.append(stelle)
         eintrag.update(status="ok", gefunden=len(gesehen_ids), im_radar=zaehler["im_radar"],
                        ausserhalb=zaehler["ausserhalb"], kein_bereich=zaehler["kein_bereich"],
-                       ausgeschlossen=zaehler["ausgeschlossen"])
+                       ausgeschlossen=zaehler["ausgeschlossen"],
+                       # Beispiele für die Fehlersuche: in deinen Regionen, aber verworfen
+                       beispiele_kein_bereich=sorted(set(proben["kein_bereich"]))[:15],
+                       beispiele_ausgeschlossen=sorted(set(proben["ausgeschlossen"]))[:10],
+                       orte_ausserhalb=[o for o, _ in proben["ausserhalb"].most_common(8)])
         bericht.append(eintrag)
         time.sleep(PAUSE_SEKUNDEN)
     return stellen, bericht, ausgefallen
@@ -1087,14 +1200,15 @@ def firmenkern(name: str) -> set[str]:
     return {w for w in normalisiere(name).split() if len(w) >= 3 and w not in _RECHTSFORMEN}
 
 
-def verbinde_dubletten(ba_stellen: dict, firmen_stellen: list[dict]) -> tuple[list[dict], int]:
-    """Steht eine Firmen-Stelle auch bei der Arbeitsagentur, wird sie dort verknüpft."""
+def verbinde_dubletten(ba_stellen: dict, firmen_stellen: list[dict], cfg: dict) -> tuple[list[dict], int]:
+    """Steht eine Firmen-Stelle auch bei der Arbeitsagentur, wird sie dort verknüpft.
+    Verglichen werden Titel ohne Ortsnamen, Region und der Kern des Firmennamens."""
     index: dict[str, list[dict]] = {}
     for s in ba_stellen.values():
-        index.setdefault(normalisiere(s["titel"]), []).append(s)
+        index.setdefault(titel_schluessel(s["titel"], cfg), []).append(s)
     eigene, doppelt = [], 0
     for fs in firmen_stellen:
-        kandidat = next((s for s in index.get(normalisiere(fs["titel"]), [])
+        kandidat = next((s for s in index.get(titel_schluessel(fs["titel"], cfg), [])
                          if set(s["regionen"]) & set(fs["regionen"]) and firmenkern(s["firma"]) & fs["_kern"]),
                         None)
         if kandidat:
@@ -1125,7 +1239,7 @@ def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_d
     frueher_doppelt: dict[str, list[dict]] = {}
     for s in alte_stellen.values():
         if s.get("herkunft", "ba") == "ba" and QUELLE_FIRMA in s.get("quellen", []):
-            frueher_doppelt.setdefault(normalisiere(s.get("titel", "")), []).append(s)
+            frueher_doppelt.setdefault(titel_schluessel(s.get("titel", ""), cfg), []).append(s)
 
     for stelle in list(ba_stellen.values()) + firmen_stellen:
         if "ids" in stelle:  # Stelle der BA: bekannte ID behalten
@@ -1141,7 +1255,7 @@ def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_d
         if alt is None and verbunden:
             alt = alte_stellen[verbunden[0]]
         if alt is None and kern is not None:
-            alt = next((s for s in frueher_doppelt.get(normalisiere(stelle["titel"]), [])
+            alt = next((s for s in frueher_doppelt.get(titel_schluessel(stelle["titel"], cfg), [])
                         if set(s.get("regionen", [])) & set(stelle["regionen"])
                         and firmenkern(s.get("firma", "")) & kern), None)
         # Frühere IDs merken, damit gemerkte Stellen auf der Webseite erhalten bleiben
@@ -1250,7 +1364,7 @@ def main() -> None:
     # 2. Firmen-Karriereseiten
     firmen_protokoll: list[str] = []
     firmen_stellen, firmen_bericht, ausgefallen = sammle_firmen(cfg, heute, firmen_protokoll)
-    firmen_stellen, doppelt = verbinde_dubletten(ba_stellen, firmen_stellen)
+    firmen_stellen, doppelt = verbinde_dubletten(ba_stellen, firmen_stellen, cfg)
     if status != "ok":
         ausgefallen.add("ba")
     firmen_fehler = sum(1 for b in firmen_bericht if b["status"] != "ok")

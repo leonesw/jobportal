@@ -107,7 +107,8 @@ begriffe = [
 #
 #  - Groß-/Kleinschreibung und Umlaute spielen keine Rolle.
 #  - Ein Wortanfang reicht ("wirtschaftsprüf" findet auch
-#    "Wirtschaftsprüfer" und "Wirtschaftsprüfung").
+#    "Wirtschaftsprüfer" und "Wirtschaftsprüfung"). Kurze Wörter
+#    bis drei Buchstaben ("iks", "fdd") zählen nur als ganzes Wort.
 #  - Die Reihenfolge ist ein Vorrang: Was ein weiter oben
 #    stehender Bereich schon erkannt hat, zählt für spätere
 #    Bereiche nicht mehr. So landet "Internal Audit" nur unter
@@ -118,7 +119,7 @@ begriffe = [
 [bereiche]
 "Interne Revision" = [
   "interne revision", "internal audit", "innenrevision", "konzernrevision",
-  "group audit", "revisor", "revision",
+  "group audit", "revisor", "revision", "iks", "internes kontrollsystem",
 ]
 "Wirtschaftsprüfung" = [
   "wirtschaftsprüf", "prüfungsassist", "abschlussprüf", "prüfungsleit",
@@ -127,8 +128,8 @@ begriffe = [
 "Transaction Services / FDD" = [
   "transaction services", "transaction advisory", "financial due diligence",
   "diligence", "transaktionsberatung", "deal advisory", "deals",
-  "deal management", "deal execution", "transaction accounting",
-  "financial advisory", "fdd",
+  "deal management", "deal execution", "deal analytics", "transaction accounting",
+  "spa advice", "financial advisory", "fdd",
 ]
 "Restrukturierung" = [
   "restrukturierung", "restructuring", "turnaround", "sanierungsberat",
@@ -137,7 +138,7 @@ begriffe = [
 ]
 "M&A / Corporate Finance" = [
   "m&a", "m & a", "mergers", "acquisitions", "corporate finance",
-  "transaction strategy",
+  "transaction strategy", "post merger", "carve-out", "carve out",
 ]
 "Debt Advisory" = [
   "debt advisory", "debt finance", "debt capital", "debt & capital",
@@ -179,10 +180,19 @@ woerter = [
   # Hotel-Nachtdienst ("Night Audit"), Anwaltsberufe, Sekretariat
   "night audit", "rechtsanwalt", "rechtsanwält", "jurist",
   "partnerassist", "teamassist", "assistenz", "sekretär",
-  # Sammelanzeigen ohne konkrete Stelle, IT-Vertrieb
-  "initiativbewerbung", "initiativ bewerbung", "unsolicited",
-  "general application", "talentpool", "talent pool", "deal maker",
+  # Sammelanzeigen ohne konkrete Stelle (auch "Initative…"), IT-Vertrieb
+  "initiativ", "initativ", "unsolicited", "general application",
+  "talentpool", "talent pool", "deal maker",
+  # Reine Steuer-Spezialisierungen, die sonst unter M&A oder TS landen
+  "m&a tax", "deals tax", "transfer pricing", "verrechnungspreis",
+  "internationales steuerrecht",
+  # Studienprogramme für Schulabgänger
+  "duales studium", "dualer student", "bachelor-studium",
 ]
+
+# Ausnahmen: Diese Wörter zählen nicht als Treffer der Ausschlussliste
+# ("Prüfungsassistenz" enthält "assistenz", ist aber eine Prüfungsstelle).
+ausnahmen = ["prüfungsassistenz", "revisionsassistenz", "wirtschaftsprüfungsassistenz"]
 
 # Berufe, die die Arbeitsagentur einer Anzeige zuordnet und die
 # immer aussortiert werden (z. B. Kanzlei-Stellen mit Titeln wie
