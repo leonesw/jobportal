@@ -79,6 +79,8 @@ ABFRAGE_ARTEN = [
 SEITENGROESSE = 100
 MAX_SEITEN = 10
 PAUSE_SEKUNDEN = 0.25
+# So lange bleibt eine Stelle sichtbar, die eine erreichbare Quelle nicht mehr liefert
+NACHFRIST_STUNDEN = 6
 
 # Diese Wörter im Titel legen die Anstellungsart genauer fest.
 ART_MUSTER = {
@@ -982,10 +984,30 @@ def quelle_workday(firma: dict, heute: date) -> list[dict]:
 
 
 def quelle_phenom(firma: dict, heute: date) -> list[dict]:
+    """Stellensuche von Phenom (PwC). Die Reihenfolge der Treffer wechselt von Abruf zu
+    Abruf; beim Blättern fehlen deshalb manche Stellen, andere kommen doppelt. Darum
+    blättern wir bis zu fünfmal durch, bis so viele Stellen da sind, wie die Seite meldet."""
+    gefunden: dict[str, dict] = {}
+    gesamt = 0
+    for durchgang in range(5):
+        try:
+            gesamt = _phenom_durchgang(firma, gefunden)
+        except Exception:  # noqa: BLE001
+            if durchgang == 0:
+                raise
+            break  # mit den Stellen aus den bisherigen Durchgängen weiterarbeiten
+        if not gesamt or len(gefunden) >= gesamt:
+            break
+    GESAMT_LAUT_QUELLE[herkunft_von(firma)] = gesamt
+    return list(gefunden.values())
+
+
+def _phenom_durchgang(firma: dict, gefunden: dict[str, dict]) -> int:
+    """Einmal durch alle Seiten blättern; neue Stellen landen in `gefunden`. Liefert die Gesamtzahl."""
     basis = firma["basis"].rstrip("/")
     kopf = {"Origin": basis, "Referer": f"{basis}/de/de/search-results"}
-    ergebnis, start, gesamt = [], 0, None
-    for _ in range(60):  # höchstens 60 Seiten
+    start, gesamt = 0, 0
+    for seite in range(60):  # höchstens 60 Seiten
         anfrage = {
             "lang": firma.get("sprache", "de_de"), "deviceType": "desktop", "country": firma.get("land", "de"),
             "pageName": "search-results", "ddoKey": "refineSearch", "sortBy": "", "subsearch": "",
@@ -996,13 +1018,16 @@ def quelle_phenom(firma: dict, heute: date) -> list[dict]:
         antwort = abrufen(f"{basis}/widgets", methode="POST", daten=anfrage, kopf=kopf)
         suche = antwort.get("refineSearch") or {}
         stellen = (suche.get("data") or {}).get("jobs") or []
-        if gesamt is None:
+        if seite == 0:
             gesamt = als_zahl(suche.get("totalHits"), 0)
         for j in stellen:
             orte = [re.sub(r",\s*[A-Z]{3}$", "", o).strip() for o in j.get("multi_location") or []] or [j.get("city") or ""]
             nummer = str(j.get("reqId") or j.get("jobId") or j.get("jobSeqNo") or "")
-            ergebnis.append({
-                "id": str(j.get("jobSeqNo") or nummer),
+            kennung = str(j.get("jobSeqNo") or nummer)
+            if kennung in gefunden:
+                continue
+            gefunden[kennung] = {
+                "id": kennung,
                 "titel": j.get("title") or "",
                 "firma": firma["name"],
                 "orte": [o for o in orte if o],
@@ -1012,12 +1037,12 @@ def quelle_phenom(firma: dict, heute: date) -> list[dict]:
                 "hinweise": [],
                 "arten": arten_aus_text(j.get("type") or ""),
                 "stufe": stufe_aus_system(j.get("grade")),
-            })
+            }
         start += len(stellen)  # falls der Server weniger als 100 je Seite liefert
         time.sleep(PAUSE_SEKUNDEN)
         if not stellen or (gesamt and start >= gesamt):
             break
-    return ergebnis
+    return gesamt
 
 
 def quelle_rss(firma: dict, heute: date) -> list[dict]:
@@ -1230,6 +1255,10 @@ QUELLEN = {
 }
 
 
+# Wie viele Stellen eine Quelle selbst meldet (zum Prüfen, ob alle geladen wurden)
+GESAMT_LAUT_QUELLE: dict[str, int] = {}
+
+
 def herkunft_von(firma: dict) -> str:
     return f"{firma['system']}:{firma.get('konto') or firma.get('mandant') or normalisiere(firma['name']).replace(' ', '-')}"
 
@@ -1308,6 +1337,7 @@ def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter, proben:
 def sammle_firmen(cfg: dict, heute: date, protokoll: list) -> tuple[list[dict], list[dict], set[str]]:
     """Fragt alle Firmen ab. Liefert (Stellen, Bericht je Firma, ausgefallene Herkünfte)."""
     stellen, bericht, ausgefallen = [], [], set()
+    GESAMT_LAUT_QUELLE.clear()
     for firma in cfg["firmen"]:
         abruf = QUELLEN.get(firma["system"])
         eintrag = {"name": firma["name"], "system": firma["system"], "herkunft": herkunft_von(firma)}
@@ -1340,6 +1370,11 @@ def sammle_firmen(cfg: dict, heute: date, protokoll: list) -> tuple[list[dict], 
                        beispiele_kein_bereich=sorted(set(proben["kein_bereich"]))[:15],
                        beispiele_ausgeschlossen=sorted(set(proben["ausgeschlossen"]))[:10],
                        orte_ausserhalb=[o for o, _ in proben["ausserhalb"].most_common(8)])
+        gesamt = GESAMT_LAUT_QUELLE.get(eintrag["herkunft"])
+        if gesamt:
+            eintrag["gesamt_laut_seite"] = gesamt
+            if len(gesehen_ids) < gesamt:
+                protokoll.append(f"{firma['name']}: nur {len(gesehen_ids)} von {gesamt} Stellen geladen")
         bericht.append(eintrag)
         time.sleep(PAUSE_SEKUNDEN)
     return stellen, bericht, ausgefallen
@@ -1390,11 +1425,13 @@ def verbinde_dubletten(ba_stellen: dict, firmen_stellen: list[dict], cfg: dict) 
     return eigene, doppelt
 
 
-def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei, jetzt, heute, cfg):
+def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei, jetzt, heute, cfg,
+                    erfolgreich=frozenset()):
     """Neue Stellen mit dem letzten Stand verbinden; liefert (stellen, anzahl_neu).
 
     neu_dabei: Quellen, die zum ersten Mal erfolgreich abgefragt wurden. Ihre Stellen
     gelten nicht als "gerade eben entdeckt", sondern erscheinen mit ihrem Datum.
+    erfolgreich: Quellen, die in diesem Lauf erreichbar waren (für die Nachfrist).
     """
     stellen, neu = {}, 0
     # Stand früher bei Arbeitsagentur UND Karriereseite, ist die Anzeige bei der
@@ -1451,18 +1488,45 @@ def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_d
         stelle["veroeffentlicht"] = (datum or date.fromisoformat(str(stelle["gesehen"])[:10])).isoformat()
         stellen[sid] = stelle
 
-    # Ist eine Quelle ausgefallen, bleiben ihre bisherigen Stellen erhalten. Fehlt eine
-    # Stelle länger als eine Woche (z. B. weil eine Firmen-Seite umgezogen ist), fällt sie weg.
-    if ausgefallen:
-        grenze = (heute - timedelta(days=7)).isoformat()
-        uebernommen = {i for s in stellen.values() for i in s.get("alt", [])}
-        for sid, alt in alte_stellen.items():
-            if sid in stellen or sid in uebernommen or alt.get("herkunft", "ba") not in ausgefallen:
-                continue
-            vermisst = str(alt.get("vermisst_seit") or heute.isoformat())
-            if vermisst >= grenze:
-                stellen[sid] = {**alt, "vermisst_seit": vermisst}
+    # Stellen aus dem letzten Lauf, die diesmal fehlen:
+    # - Quelle ausgefallen: Die Stelle bleibt bis zu einer Woche (z. B. Seite umgezogen).
+    # - Quelle erreichbar: Die Stelle bleibt noch NACHFRIST_STUNDEN, denn manche Seiten
+    #   lassen Stellen zwischendurch aus. So verschwindet sie nicht und kommt als "neu" wieder.
+    # - Quelle nicht mehr in firmen.toml oder Stelle passt nicht mehr zu den Einstellungen: weg.
+    jetzt_text = jetzt.isoformat().replace("+00:00", "Z")
+    grenze_ausfall = (heute - timedelta(days=7)).isoformat()
+    grenze_nachfrist = (jetzt - timedelta(hours=NACHFRIST_STUNDEN)).isoformat().replace("+00:00", "Z")
+    uebernommen = {i for s in stellen.values() for i in s.get("alt", [])}
+    for sid, alt in alte_stellen.items():
+        if sid in stellen or sid in uebernommen:
+            continue
+        herkunft = alt.get("herkunft", "ba")
+        vermisst = str(alt.get("vermisst_seit") or jetzt_text)
+        if herkunft in ausgefallen:
+            behalten = vermisst >= grenze_ausfall
+        elif herkunft in erfolgreich:
+            behalten = vermisst >= grenze_nachfrist
+        else:
+            behalten = False
+        if behalten and passt_noch(alt, cfg):
+            stellen[sid] = {**alt, "vermisst_seit": vermisst}
     return stellen, neu
+
+
+def passt_noch(stelle: dict, cfg: dict) -> bool:
+    """Passt eine gerade fehlende Stelle noch zu den Einstellungen? (Ausschlussliste,
+    Bereiche oder Regionen können seit dem letzten Lauf geändert worden sein.)"""
+    if not all(feld in stelle for feld in PFLICHTFELDER):  # Eintrag aus einer älteren Version
+        return False
+    bereiche = {name for name, _ in cfg["bereiche"]}
+    regionen = {r["name"] for r in cfg["regionen"]} | ({cfg["remote_region"]} if cfg["remote"] else set())
+    return (not ist_ausgeschlossen(normalisiere(stelle.get("titel", "")), cfg)
+            and bool(set(stelle.get("bereiche", [])) & bereiche)
+            and bool(set(stelle.get("regionen", [])) & regionen))
+
+
+# Felder, die jede Stelle braucht, damit die Webseite sie anzeigen und filtern kann
+PFLICHTFELDER = ("titel", "link", "ort", "regionen", "bereiche", "arten", "stufen", "gesehen", "veroeffentlicht", "quellen")
 
 
 def schreibe_daten(daten: dict) -> None:
@@ -1544,11 +1608,14 @@ def main() -> None:
         erfolgreich.add("ba")
     neu_dabei = erfolgreich - bekannt
     stellen, neu = fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei,
-                                   jetzt, heute, cfg)
+                                   jetzt, heute, cfg, erfolgreich - ausgefallen)
     # Davon von Firmen, die gerade erst in firmen.toml aufgenommen wurden
     neu_von_neuen_firmen = sum(1 for sid, s in stellen.items()
                                if s.get("herkunft", "ba") != "ba" and s["herkunft"] in neu_dabei
                                and sid not in alte_stellen and not s.get("alt"))
+    # Stellen in der Nachfrist: Quelle erreichbar, Stelle diesmal nicht geliefert
+    in_nachfrist = [s for s in stellen.values()
+                    if s.get("vermisst_seit") and s.get("herkunft", "ba") not in ausgefallen]
 
     ohne_ort = sum(1 for s in stellen.values() if not s.get("ort"))
     ohne_stufe = Counter(s["titel"] for s in stellen.values() if s.get("stufen") == [OHNE_STUFE])
@@ -1559,6 +1626,7 @@ def main() -> None:
         "kein_bereich": [t for t, _ in beispiele["kein_bereich"].most_common(150)],
         "ausgeschlossen": [t for t, _ in beispiele["ausgeschlossen"].most_common(60)],
         "firmen": firmen_bericht,
+        "nachfrist": sorted(f"{s.get('firma', '')}: {s.get('titel', '')}" for s in in_nachfrist)[:40],
     })
 
     regionen_liste = [r["name"] for r in cfg["regionen"]]
@@ -1607,6 +1675,8 @@ def main() -> None:
         f"{aus_firmen} Stellen im Radar (davon {doppelt} auch bei der Arbeitsagentur), Dauer {dauer - dauer_ba:.0f} s",
         f"- Stellen im Radar: **{len(stellen)}**, davon neu in diesem Lauf: **{neu}**"
         + (f" ({neu_von_neuen_firmen} davon von neu aufgenommenen Firmen)" if neu_von_neuen_firmen else "")
+        + (f", diesmal nicht geliefert (bleiben noch bis zu {NACHFRIST_STUNDEN} Std.): {len(in_nachfrist)}"
+           if in_nachfrist else "")
         + f", ohne Ortsangabe: {ohne_ort}",
         f"- Verworfene Titel (Arbeitsagentur): {len(beispiele['kein_bereich'])} ohne passenden Bereich, "
         f"{len(beispiele['ausgeschlossen'])} durch die Ausschlussliste, {statistik['unlesbar']} unlesbare Einträge",
