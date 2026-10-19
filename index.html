@@ -4,301 +4,362 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stellenradar</title>
-<meta name="description" content="Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&amp;A, Restrukturierung und Private Equity – stündlich aktualisiert.">
+<meta name="description" content="Finance- und Advisory-Stellen in Rhein-Neckar und Frankfurt/Rhein-Main – stündlich aktualisiert.">
 <meta name="robots" content="noindex">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23F2F5F0'/%3E%3Cpath d='M7 17.5c2.6 1.6 4.4 3.6 5.6 6.2C15.4 15.8 19.6 10 26 6.5' fill='none' stroke='%23B8322A' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#FCFFF5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#112832" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23193441'/%3E%3Cpath d='M8.5 16.8c2.2 1.3 3.8 3.1 4.9 5.4C16.1 15.2 19.6 10.6 24.6 7.9' fill='none' stroke='%23FCFFF5' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap">
 <style>
+  /* Farben: Palette "Neutral Blue" (#FCFFF5, #D1DBBD, #91AA9D, #3E606F, #193441) */
   :root {
-    --papier: #F2F5F0;
-    --flaeche: #FAFCF9;
-    --linie: #CFDCCB;
-    --linie-stark: #94AE90;
-    --tinte: #1F2B25;
-    --tinte-2: #56655D;
-    --rotstift: #B8322A;
-    --gruenstift: #2D6A47;
-    --gruen-hell: #E1ECDF;
-    --warnung: #FFF3D6;
-    --warnung-rand: #E2C171;
-    --schrift: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --grund: #EFF4E4;
+    --flaeche: #FCFFF5;
+    --linie: #D1DBBD;
+    --linie-zart: #E3EAD4;
+    --tinte: #193441;
+    --tinte-2: #3E606F;
+    --tinte-3: #56736A;
+    --akzent: #3E606F;
+    --auf-akzent: #FCFFF5;
+    --akzent-hell: #E3ECEC;
+    --chip: #E5ECD9;
+    --deko: #91AA9D;
+    --leiste: rgba(252, 255, 245, 0.78);
+    --fokus: rgba(62, 96, 111, 0.28);
+    --marke-grund: #193441;
+    --marke-haken: #FCFFF5;
+    --schatten: 0 1px 2px rgba(25, 52, 65, 0.05), 0 10px 30px rgba(25, 52, 65, 0.06);
+    --pfeil: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%233E606F' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    /* Apples Systemschrift auf Apple-Geräten, sonst Inter */
+    --schrift: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --papier: #141B17;
-      --flaeche: #1A231E;
-      --linie: #2A3830;
-      --linie-stark: #4A6152;
-      --tinte: #E4ECE6;
-      --tinte-2: #9AABA1;
-      --rotstift: #F07A6C;
-      --gruenstift: #7CC79A;
-      --gruen-hell: #22342A;
-      --warnung: #3A3220;
-      --warnung-rand: #7A6533;
+      --grund: #112832;
+      --flaeche: #193441;
+      --linie: #2B4A57;
+      --linie-zart: #22404D;
+      --tinte: #FCFFF5;
+      --tinte-2: #D1DBBD;
+      --tinte-3: #91AA9D;
+      --akzent: #9CC2D2;
+      --auf-akzent: #112832;
+      --akzent-hell: #24485A;
+      --chip: #24485A;
+      --deko: #5E7F8C;
+      --leiste: rgba(17, 40, 50, 0.74);
+      --fokus: rgba(156, 194, 210, 0.35);
+      --marke-grund: #3E606F;
+      --schatten: none;
+      --pfeil: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%239CC2D2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     }
   }
   :root[data-theme="dark"] {
-    --papier: #141B17;
-    --flaeche: #1A231E;
-    --linie: #2A3830;
-    --linie-stark: #4A6152;
-    --tinte: #E4ECE6;
-    --tinte-2: #9AABA1;
-    --rotstift: #F07A6C;
-    --gruenstift: #7CC79A;
-    --gruen-hell: #22342A;
-    --warnung: #3A3220;
-    --warnung-rand: #7A6533;
+    --grund: #112832;
+    --flaeche: #193441;
+    --linie: #2B4A57;
+    --linie-zart: #22404D;
+    --tinte: #FCFFF5;
+    --tinte-2: #D1DBBD;
+    --tinte-3: #91AA9D;
+    --akzent: #9CC2D2;
+    --auf-akzent: #112832;
+    --akzent-hell: #24485A;
+    --chip: #24485A;
+    --deko: #5E7F8C;
+    --leiste: rgba(17, 40, 50, 0.74);
+    --fokus: rgba(156, 194, 210, 0.35);
+    --marke-grund: #3E606F;
+    --schatten: none;
+    --pfeil: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%239CC2D2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
 
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
+  html { -webkit-text-size-adjust: 100%; scroll-padding-top: 68px; }
   body {
     margin: 0;
-    background: var(--papier);
+    background: var(--grund);
     color: var(--tinte);
     font-family: var(--schrift);
-    font-size: 16px;
-    line-height: 1.5;
-    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    line-height: 1.47;
+    letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-  a { color: var(--gruenstift); }
-  button, input, select { font: inherit; color: inherit; }
-  :focus-visible { outline: 2px solid var(--gruenstift); outline-offset: 2px; border-radius: 3px; }
+  a { color: var(--akzent); }
+  button, input, select { font: inherit; color: inherit; letter-spacing: inherit; }
+  :focus-visible { outline: 2px solid var(--akzent); outline-offset: 2px; }
   [hidden] { display: none !important; }
+  .unsichtbar {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
 
   .springen {
-    position: absolute; left: 16px; top: -48px; padding: 8px 12px;
-    background: var(--tinte); color: var(--papier); border-radius: 4px; z-index: 50;
+    position: absolute; left: 16px; top: -48px; padding: 8px 14px; z-index: 50;
+    background: var(--tinte); color: var(--flaeche); border-radius: 999px; text-decoration: none;
   }
-  .springen:focus { top: 12px; }
+  .springen:focus { top: 10px; }
 
-  /* Kopf mit doppelter Abschlusslinie wie unter einer Summe */
-  .kopf {
-    max-width: 1180px; margin: 0 auto; padding: 36px 16px 18px; position: relative;
-    display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 24px;
+  /* Leiste oben: bleibt beim Scrollen stehen, leicht durchscheinend */
+  .leiste {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--leiste);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--linie-zart);
   }
-  .kopf::after {
-    content: ""; position: absolute; left: 16px; right: 16px; bottom: 0;
-    border-bottom: 3px double var(--linie-stark);
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .leiste { background: var(--flaeche); }
+  }
+  .leiste-innen {
+    max-width: 1120px; height: 52px; margin: 0 auto; padding: 0 22px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
   }
   .marke {
-    margin: 0; display: flex; align-items: center; gap: 12px;
-    font-size: clamp(30px, 5vw, 46px); line-height: 1;
-    font-weight: 780; font-stretch: 118%; letter-spacing: -0.015em;
+    margin: 0; display: flex; align-items: center; gap: 10px;
+    font-size: 19px; font-weight: 650; letter-spacing: -0.022em; line-height: 1;
   }
-  .marke svg { width: 0.82em; height: 0.82em; flex: none; }
-  .unterzeile { margin: 10px 0 0; color: var(--tinte-2); font-size: 15px; max-width: 60ch; }
-  .stand { margin: 0; color: var(--tinte-2); font-size: 14px; text-align: right; }
+  .marke svg { width: 26px; height: 26px; flex: none; }
+  .marke rect { fill: var(--marke-grund); }
+  .marke path { stroke: var(--marke-haken); }
+  .filter-knopf {
+    display: none; height: 34px; padding: 0 16px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--linie); background: var(--flaeche); color: var(--tinte); font-size: 14px; font-weight: 550;
+  }
+
+  .einleitung {
+    max-width: 1120px; margin: 0 auto; padding: 26px 22px 2px;
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 28px;
+  }
+  .unterzeile { margin: 0; font-size: 17px; color: var(--tinte-2); max-width: 64ch; letter-spacing: -0.014em; }
+  .stand { margin: 0; font-size: 13px; color: var(--tinte-3); }
   .stand strong { color: var(--tinte); font-weight: 600; }
 
-  .hinweis {
-    max-width: 1180px; margin: 16px auto 0; padding: 0 16px;
-  }
+  .hinweis { max-width: 1120px; margin: 18px auto 0; padding: 0 22px; }
   .hinweis p {
-    margin: 0; padding: 10px 14px; border: 1px solid var(--warnung-rand);
-    background: var(--warnung); border-radius: 6px; font-size: 15px;
+    margin: 0; padding: 12px 16px; border-radius: 14px;
+    background: var(--akzent-hell); color: var(--tinte); font-size: 14px;
   }
 
   .layout {
-    max-width: 1180px; margin: 0 auto; padding: 0 16px 48px;
-    display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 40px;
+    max-width: 1120px; margin: 0 auto; padding: 4px 22px 56px;
+    display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 40px;
   }
 
   /* Filter */
-  .filter { padding-top: 22px; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; }
+  .filter {
+    position: sticky; top: 52px; align-self: start; max-height: calc(100vh - 52px); overflow-y: auto;
+    padding: 24px 8px 24px 0; scrollbar-width: thin;
+  }
   .filter-mobilkopf { display: none; }
-  .suchfeld { display: block; font-size: 14px; font-weight: 620; margin-bottom: 18px; }
-  .suchfeld input {
-    display: block; width: 100%; margin-top: 6px; padding: 9px 11px;
-    border: 1px solid var(--linie-stark); border-radius: 6px; background: var(--flaeche);
-    font-weight: 400; font-size: 15px;
-  }
-  fieldset { border: 0; margin: 0 0 18px; padding: 0; min-width: 0; }
-  legend {
-    padding: 0 0 6px; font-size: 14px; font-weight: 650; width: 100%;
-    border-bottom: 1px solid var(--linie);
-  }
+  fieldset { border: 0; margin: 0 0 22px; padding: 0; min-width: 0; }
+  legend { padding: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--tinte-2); letter-spacing: -0.003em; }
   .option {
     display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 10px;
-    padding: 5px 0; font-size: 15px; cursor: pointer; line-height: 1.3;
+    margin: 0 -8px; padding: 6px 8px; border-radius: 9px; font-size: 15px; line-height: 1.3; cursor: pointer;
   }
+  .option:hover { background: var(--akzent-hell); }
   .option input {
-    appearance: none; -webkit-appearance: none; margin: 0;
-    width: 18px; height: 18px; border: 1.5px solid var(--tinte-2); border-radius: 4px;
-    background: var(--flaeche); display: grid; place-content: center; cursor: pointer;
+    appearance: none; -webkit-appearance: none; margin: 0; cursor: pointer;
+    width: 18px; height: 18px; border: 1.5px solid var(--deko); border-radius: 5px;
+    background: var(--flaeche); display: grid; place-content: center;
   }
   .option input[type="radio"] { border-radius: 50%; }
-  .option input:checked { background: var(--gruenstift); border-color: var(--gruenstift); }
+  .option input:checked { background: var(--akzent); border-color: var(--akzent); }
   .option input[type="checkbox"]:checked::after {
     content: ""; width: 9px; height: 5px; margin-top: -2px;
-    border: solid var(--papier); border-width: 0 0 2px 2px; transform: rotate(-45deg);
+    border: solid var(--auf-akzent); border-width: 0 0 2px 2px; transform: rotate(-45deg);
   }
   .option input[type="radio"]:checked::after {
-    content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--papier);
+    content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--auf-akzent);
   }
-  .option .zahl { color: var(--tinte-2); font-size: 14px; }
-  .option .erklaerung { grid-column: 2 / 4; margin-top: -4px; font-size: 13px; color: var(--tinte-2); line-height: 1.35; }
-  .option.leer-option { color: var(--tinte-2); }
+  .option .zahl { color: var(--tinte-3); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .option .erklaerung { grid-column: 2 / 4; margin-top: -3px; font-size: 12.5px; color: var(--tinte-3); line-height: 1.35; }
+  .option.leer-option { color: var(--tinte-3); }
   .zuruecksetzen {
-    background: none; border: 0; padding: 4px 0; color: var(--gruenstift);
-    text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-size: 15px;
+    background: none; border: 0; padding: 4px 0; color: var(--akzent); cursor: pointer;
+    font-size: 14px; font-weight: 550;
   }
+  .zuruecksetzen:hover { text-decoration: underline; text-underline-offset: 3px; }
 
   /* Ergebnisse */
   .haupt { min-width: 0; outline: none; }
-  .summe {
-    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px 20px;
-    padding: 22px 0 12px; border-bottom: 1px solid var(--linie-stark);
-  }
-  .summe-text { margin: 0; font-size: 16px; color: var(--tinte-2); }
+  .summe { padding: 24px 0 16px; }
+  .summe-text { margin: 0 0 16px; font-size: 15px; color: var(--tinte-2); }
   .summe-text strong {
-    color: var(--tinte); font-size: 22px; font-weight: 720; font-stretch: 105%;
-    text-decoration: underline double var(--linie-stark); text-underline-offset: 6px;
-    text-decoration-thickness: 1px;
+    display: block; margin-bottom: 2px; color: var(--tinte);
+    font-size: clamp(28px, 3.2vw, 34px); line-height: 1.12; font-weight: 650; letter-spacing: -0.026em;
   }
-  .summe-text .neu-hinweis { color: var(--rotstift); font-weight: 600; white-space: nowrap; }
-  .werkzeuge { display: flex; align-items: center; gap: 10px; }
-  .sortierung { font-size: 14px; color: var(--tinte-2); display: flex; align-items: center; gap: 8px; }
+  .summe-text .neu-hinweis { color: var(--akzent); font-weight: 600; }
+  .werkzeuge { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .suchfeld { position: relative; display: block; flex: 1 1 260px; }
+  .suchfeld svg {
+    position: absolute; left: 13px; top: 50%; width: 17px; height: 17px; transform: translateY(-50%);
+    color: var(--tinte-3); pointer-events: none;
+  }
+  .suchfeld input {
+    -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 40px; margin: 0;
+    padding: 0 14px 0 38px; border-radius: 12px; border: 1px solid var(--linie);
+    background: var(--flaeche); font-size: 15px;
+  }
+  .suchfeld input::placeholder { color: var(--tinte-3); opacity: 1; }
+  .suchfeld input:focus { outline: none; border-color: var(--akzent); box-shadow: 0 0 0 3px var(--fokus); }
   .sortierung select {
-    padding: 6px 30px 6px 10px; border: 1px solid var(--linie-stark); border-radius: 6px;
-    background: var(--flaeche); color: var(--tinte); font-size: 15px;
-  }
-  .filter-knopf {
-    display: none; padding: 7px 12px; border: 1px solid var(--linie-stark); border-radius: 6px;
-    background: var(--flaeche); cursor: pointer; font-size: 15px;
+    -webkit-appearance: none; appearance: none; height: 40px; padding: 0 36px 0 16px; cursor: pointer;
+    border-radius: 999px; border: 1px solid var(--linie); color: var(--tinte); font-size: 15px;
+    background: var(--flaeche) var(--pfeil) no-repeat right 14px center / 12px 8px;
   }
 
-  .eintraege { list-style: none; margin: 0; padding: 0; }
+  /* Liste: eine durchgehende Fläche, Trennlinien eingerückt */
+  .eintraege {
+    list-style: none; margin: 0; padding: 0;
+    background: var(--flaeche); border: 1px solid var(--linie); border-radius: 18px;
+    box-shadow: var(--schatten); overflow: hidden;
+  }
+  .eintraege:empty { display: none; }
   .eintrag {
-    position: relative; display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; gap: 4px 18px;
-    padding: 16px 0 15px; border-bottom: 1px solid var(--linie);
+    position: relative; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto;
+    grid-template-areas: "punkt titel zeit" ". firma firma" ". marken aktionen";
+    column-gap: 14px; padding: 16px 16px 14px 14px;
   }
-  .eintrag.ist-neu::before {
-    content: ""; position: absolute; left: -14px; top: 18px; bottom: 18px; width: 3px;
-    border-radius: 2px; background: var(--rotstift);
+  .inhalt, .seite { display: contents; }
+  .punkt { grid-area: punkt; }
+  .titel { grid-area: titel; justify-self: start; }
+  .firma { grid-area: firma; }
+  .marken { grid-area: marken; }
+  .zeit { grid-area: zeit; justify-self: end; }
+  .aktionen { grid-area: aktionen; align-self: end; margin: 0 -6px -4px 8px; }
+  .eintrag + .eintrag::before {
+    content: ""; position: absolute; top: 0; left: 36px; right: 0; border-top: 1px solid var(--linie-zart);
   }
-  .eintrag.ist-ausgeblendet { opacity: 0.55; }
-  .zeit { font-size: 14px; color: var(--tinte-2); padding-top: 2px; }
-  .zeit .neu {
-    display: block; color: var(--rotstift); font-weight: 650; font-size: 13px;
-  }
+  .punkt { width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; }
+  .eintrag.ist-neu .punkt { background: var(--akzent); }
+  .eintrag.ist-ausgeblendet :is(.titel, .firma, .marken, .zeit) { opacity: 0.5; }
   .titel {
-    display: inline; font-size: 18px; line-height: 1.3; font-weight: 640; font-stretch: 92%;
+    font-size: 17px; line-height: 1.3; font-weight: 600; letter-spacing: -0.016em;
     color: var(--tinte); text-decoration: none;
   }
-  .titel:hover { text-decoration: underline; text-underline-offset: 3px; color: var(--gruenstift); }
-  .firma { margin: 4px 0 0; font-size: 15px; color: var(--tinte-2); }
-  .firma b { color: var(--tinte); font-weight: 540; }
-  .marken { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  a.titel:hover { color: var(--akzent); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  .firma { margin: 3px 0 0; font-size: 15px; color: var(--tinte-2); }
+  .firma b { color: var(--tinte); font-weight: 500; }
+  .firma .weitere { color: var(--tinte-3); text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+  .marken { margin: 10px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .marken span {
-    font-size: 13px; padding: 2px 8px; border-radius: 4px; line-height: 1.5;
-    background: var(--gruen-hell); color: var(--tinte);
+    font-size: 12.5px; line-height: 1; padding: 6px 10px; border-radius: 999px;
+    background: var(--chip); color: var(--tinte); font-weight: 500; letter-spacing: 0;
   }
-  .marken span.art { background: transparent; border: 1px solid var(--linie-stark); padding: 1px 7px; }
-  .marken span.stufe { background: transparent; border: 1px solid var(--tinte-2); padding: 1px 7px; font-weight: 600; }
-  .marken span.quelle {
-    background: transparent; color: var(--gruenstift); border: 1px solid var(--gruenstift);
-    padding: 1px 7px; font-weight: 600; cursor: help;
-  }
-  .firma .weitere { color: var(--tinte-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
-  .marken a { font-size: 13px; margin-left: 4px; text-underline-offset: 2px; }
+  .marken span.stufe { background: transparent; box-shadow: inset 0 0 0 1px var(--deko); }
+  .marken span.art { background: transparent; box-shadow: inset 0 0 0 1px var(--linie); color: var(--tinte-2); }
+  .marken span.quelle { background: var(--akzent-hell); color: var(--akzent); font-weight: 600; cursor: help; }
+  .marken a { margin-left: 4px; font-size: 13px; font-weight: 550; text-decoration: none; }
+  .marken a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-  .aktionen { display: flex; gap: 4px; align-items: flex-start; }
+  .zeit { font-size: 13px; color: var(--tinte-3); white-space: nowrap; padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .aktionen { display: flex; gap: 4px; }
   .aktionen button {
-    width: 40px; height: 40px; border: 1px solid transparent; border-radius: 8px;
-    background: none; cursor: pointer; display: grid; place-content: center; color: var(--tinte-2);
+    width: 36px; height: 36px; border: 0; border-radius: 50%; cursor: pointer;
+    background: transparent; color: var(--tinte-3); display: grid; place-content: center;
   }
-  .aktionen button:hover { border-color: var(--linie); background: var(--flaeche); }
-  .aktionen svg { width: 22px; height: 22px; }
-  .merken[aria-pressed="true"] { color: var(--rotstift); }
-  .merken[aria-pressed="true"] svg path { stroke-width: 3.2; }
-  .eintrag.ist-gemerkt .titel { text-decoration: underline; text-decoration-color: var(--rotstift);
-    text-decoration-thickness: 2px; text-underline-offset: 4px; }
+  .aktionen button:hover { background: var(--akzent-hell); color: var(--akzent); }
+  .aktionen svg { width: 18px; height: 18px; }
+  .merken[aria-pressed="true"], .merken[aria-pressed="true"]:hover { background: var(--akzent); color: var(--auf-akzent); }
 
-  .leer { padding: 40px 0; max-width: 52ch; }
-  .leer h2 { margin: 0 0 6px; font-size: 20px; font-weight: 680; }
-  .leer p { margin: 0 0 12px; color: var(--tinte-2); }
-  .leer button {
-    padding: 8px 14px; border-radius: 6px; border: 1px solid var(--gruenstift);
-    background: var(--gruenstift); color: var(--papier); cursor: pointer;
+  .leer {
+    padding: 28px 24px; border-radius: 18px; background: var(--flaeche); border: 1px solid var(--linie);
+  }
+  .leer h2 { margin: 0 0 6px; font-size: 20px; font-weight: 650; letter-spacing: -0.02em; }
+  .leer p { margin: 0 0 16px; color: var(--tinte-2); max-width: 52ch; }
+  .leer button, .filter-mobilkopf button {
+    height: 36px; padding: 0 18px; border-radius: 999px; border: 0; cursor: pointer;
+    background: var(--akzent); color: var(--auf-akzent); font-weight: 600; font-size: 14px;
   }
   .mehr {
-    margin: 20px 0 0; padding: 10px 16px; border: 1px solid var(--linie-stark); border-radius: 6px;
-    background: var(--flaeche); cursor: pointer; font-size: 15px;
+    display: block; margin: 18px auto 0; height: 40px; padding: 0 22px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--linie); background: var(--flaeche); color: var(--akzent); font-weight: 550;
   }
+  .mehr:hover { background: var(--akzent-hell); }
 
-  .fuss {
-    max-width: 1180px; margin: 0 auto; padding: 0 16px 40px; color: var(--tinte-2); font-size: 14px;
-  }
-  .fuss-innen { border-top: 1px solid var(--linie); padding-top: 18px; }
-  .fuss p { margin: 0 0 4px; max-width: 80ch; }
+  .fuss { max-width: 1120px; margin: 0 auto; padding: 0 22px 40px; color: var(--tinte-3); font-size: 12px; line-height: 1.5; }
+  .fuss-innen { border-top: 1px solid var(--linie); padding-top: 16px; }
+  .fuss p { margin: 0 0 6px; max-width: 90ch; }
 
   .meldung {
-    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
-    display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 16px;
-    background: var(--tinte); color: var(--papier); border-radius: 8px; font-size: 15px;
-    box-shadow: 0 6px 24px rgba(20, 30, 25, 0.25); z-index: 40; max-width: calc(100% - 32px);
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 40;
+    display: flex; align-items: center; gap: 14px; max-width: calc(100% - 32px);
+    padding: 8px 8px 8px 20px; border-radius: 999px; font-size: 15px;
+    background: var(--tinte); color: var(--flaeche); box-shadow: 0 10px 30px rgba(25, 52, 65, 0.28);
   }
   .meldung button {
-    background: none; border: 1px solid currentColor; color: inherit; border-radius: 6px;
-    padding: 4px 10px; cursor: pointer;
+    height: 32px; padding: 0 14px; border: 0; border-radius: 999px; cursor: pointer;
+    background: rgba(127, 150, 150, 0.32); color: inherit; font-weight: 600; font-size: 14px;
   }
 
-  @media (max-width: 860px) {
+  @media (max-width: 900px) {
     .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
-    .kopf { padding-top: 24px; }
-    .stand { text-align: left; }
-    .filter-knopf { display: inline-block; }
+    .filter-knopf { display: inline-flex; align-items: center; }
     .filter {
       display: none; position: fixed; inset: 0; z-index: 30; max-height: none;
-      background: var(--papier); padding: 0 16px 32px; overflow-y: auto;
+      background: var(--grund); padding: 0 20px 40px; overflow-y: auto;
     }
     body.filter-offen { overflow: hidden; }
     body.filter-offen .filter { display: block; }
     .filter-mobilkopf {
       display: flex; justify-content: space-between; align-items: center;
-      position: sticky; top: 0; background: var(--papier); padding: 14px 0; margin-bottom: 8px;
-      border-bottom: 3px double var(--linie-stark);
+      position: sticky; top: 0; z-index: 1; margin: 0 -20px 14px; padding: 10px 20px; min-height: 52px;
+      background: var(--leiste); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid var(--linie-zart);
     }
-    .filter-mobilkopf h2 { margin: 0; font-size: 20px; font-weight: 700; }
-    .filter-mobilkopf button {
-      padding: 8px 16px; border-radius: 6px; border: 1px solid var(--gruenstift);
-      background: var(--gruenstift); color: var(--papier); cursor: pointer;
-    }
+    .filter-mobilkopf h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.022em; }
   }
   @media (max-width: 640px) {
-    .eintrag { grid-template-columns: minmax(0, 1fr) auto; padding: 14px 0; }
-    .eintrag.ist-neu::before { left: -10px; }
-    .zeit { grid-column: 1 / -1; padding: 0; font-size: 13px; }
-    .zeit .neu { display: inline; margin-right: 8px; }
-    .titel { font-size: 17px; }
-    .aktionen { grid-row: 2; grid-column: 2; }
-    .sortierung span { display: none; }
+    .leiste-innen, .einleitung, .hinweis, .layout, .fuss { padding-left: 16px; padding-right: 16px; }
+    .einleitung { padding-top: 20px; }
+    .unterzeile { font-size: 16px; }
+    .summe { padding-top: 18px; }
+    .eintraege { margin: 0 -4px; }
+    .eintrag { column-gap: 10px; padding: 14px 12px 14px 10px; }
+    .eintrag + .eintrag::before { left: 28px; }
+    /* Haken und Kreuz neben Firma und Ort, damit die Marken die ganze Breite haben */
+    .eintrag { grid-template-areas: "punkt titel zeit" ". firma aktionen" ". marken marken"; }
+    .aktionen { align-self: center; margin: 0 -6px 0 6px; }
+    .titel { font-size: 16px; }
+    .firma { font-size: 14px; }
+    .aktionen button { width: 34px; height: 34px; }
+    .werkzeuge { flex-wrap: nowrap; }
+    .suchfeld { flex: 1 1 auto; min-width: 0; }
+    .sortierung select { font-size: 14px; padding-left: 14px; }
   }
   @media (prefers-reduced-motion: no-preference) {
-    .meldung { animation: auftauchen 160ms ease-out; }
+    .meldung { animation: auftauchen 180ms ease-out; }
     @keyframes auftauchen { from { opacity: 0; transform: translate(-50%, 8px); } }
+    body.filter-offen .filter { animation: hochfahren 200ms ease-out; }
+    @keyframes hochfahren { from { opacity: 0; transform: translateY(14px); } }
   }
 </style>
 </head>
 <body>
 <a class="springen" href="#liste">Zur Stellenliste springen</a>
 
-<header class="kopf">
-  <div>
+<header class="leiste">
+  <div class="leiste-innen">
     <h1 class="marke">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 17.5c2.8 1.7 4.8 3.9 6.1 6.7C14.6 15 19.6 8.6 27.5 4.6" fill="none" stroke="var(--rotstift)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M8.5 16.8c2.2 1.3 3.8 3.1 4.9 5.4C16.1 15.2 19.6 10.6 24.6 7.9" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Stellenradar
     </h1>
-    <p class="unterzeile" id="unterzeile">Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&amp;A, Restrukturierung und Private Equity.</p>
+    <button type="button" class="filter-knopf" id="filter-oeffnen" aria-controls="filter" aria-expanded="false">Filter</button>
   </div>
-  <p class="stand" id="stand">Stellen werden geladen …</p>
 </header>
+
+<div class="einleitung">
+  <p class="unterzeile" id="unterzeile">Finance- und Advisory-Stellen.</p>
+  <p class="stand" id="stand">Stellen werden geladen …</p>
+</div>
 
 <div class="hinweis" id="hinweis" hidden></div>
 
@@ -308,9 +369,6 @@
       <h2>Filter</h2>
       <button type="button" id="filter-schliessen">Ergebnisse zeigen</button>
     </div>
-    <label class="suchfeld">Suchen
-      <input id="suche" type="search" placeholder="Titel, Firma oder Ort" autocomplete="off">
-    </label>
     <fieldset id="gruppe-zeitraum"><legend>Zeitraum</legend></fieldset>
     <fieldset id="gruppe-arten"><legend>Anstellungsart</legend></fieldset>
     <fieldset id="gruppe-stufen"><legend>Karrierestufe</legend></fieldset>
@@ -328,8 +386,11 @@
     <div class="summe">
       <p class="summe-text" id="summe" aria-live="polite"></p>
       <div class="werkzeuge">
-        <button type="button" class="filter-knopf" id="filter-oeffnen" aria-controls="filter">Filter</button>
-        <label class="sortierung"><span>Sortieren</span>
+        <label class="suchfeld"><span class="unsichtbar">Suchen</span>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.75" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <input id="suche" type="search" placeholder="Titel, Firma, Ort" autocomplete="off">
+        </label>
+        <label class="sortierung"><span class="unsichtbar">Sortieren</span>
           <select id="sortierung">
             <option value="neu">Neueste zuerst</option>
             <option value="alt">Älteste zuerst</option>
@@ -347,7 +408,7 @@
 
 <footer class="fuss"><div class="fuss-innen">
   <p id="fuss-quellen">Quellen: Jobsuche der Bundesagentur für Arbeit und die Karriereseiten ausgewählter Firmen (Liste in firmen.toml). Die Liste wird jede Stunde automatisch aktualisiert.</p>
-  <p>Mit dem Haken merkst du dir eine Stelle, mit dem Kreuz blendest du sie aus. Beides wird nur in diesem Browser gespeichert, auf dem Handy also getrennt vom Laptop.</p>
+  <p>Der Punkt vor einer Stelle zeigt, dass sie seit deinem letzten Besuch neu ist. Mit dem Haken merkst du dir eine Stelle, mit dem Kreuz blendest du sie aus. Beides wird nur in diesem Browser gespeichert, auf dem Handy also getrennt vom Laptop.</p>
 </div></footer>
 
 <div class="meldung" id="meldung" role="status" hidden><span id="meldung-text"></span><button type="button" id="meldung-knopf">Rückgängig</button></div>
@@ -621,7 +682,7 @@
     const extern = sichererLink(s.extern);
 
     const zeit = el("div", { class: "zeit" },
-      s.neu ? el("span", { class: "neu", text: "neu" }) : null,
+      s.neu ? el("span", { class: "unsichtbar", text: "Neu, " }) : null,
       el("time", { datetime: s.gesehen, title: zeitTitel(s), text: zeitText(s) }));
 
     const titel = link
@@ -676,7 +737,9 @@
 
     return el("li", {
       class: ["eintrag", s.neu ? "ist-neu" : "", istGemerkt ? "ist-gemerkt" : "", istAusgeblendet ? "ist-ausgeblendet" : ""].join(" ").trim(),
-    }, zeit, el("div", {}, titel, firma, marken), el("div", { class: "aktionen" }, merken, weg));
+    }, el("span", { class: "punkt", "aria-hidden": "true", title: s.neu ? "Neu seit deinem letzten Besuch" : null }),
+      el("div", { class: "inhalt" }, titel, firma, marken),
+      el("div", { class: "seite" }, zeit, el("div", { class: "aktionen" }, merken, weg)));
   }
 
   function zeige(zuruecksetzenSichtbar) {
@@ -704,8 +767,9 @@
     if (!leer.hidden) {
       const knopf = el("button", { type: "button", text: "Alle Filter zurücksetzen" });
       knopf.addEventListener("click", alleZuruecksetzen);
-      leer.replaceChildren(el("h2", { text: "Keine Stelle passt zu diesen Filtern." }),
-        el("p", { text: "Erweitere den Zeitraum oder wähle weitere Bereiche und Anstellungsarten aus." }), knopf);
+      leer.replaceChildren(el("h2", { text: zustand.suche ? "Keine Stelle passt zu deiner Suche." : "Keine Stelle passt zu diesen Filtern." }),
+        el("p", { text: zustand.suche ? "Prüfe den Suchbegriff oder setze die Filter zurück."
+          : "Erweitere den Zeitraum oder wähle weitere Bereiche und Anstellungsarten aus." }), knopf);
     }
     aktualisiereZahlen();
   }
@@ -820,8 +884,8 @@
     const orte = regionListe.filter((r) => !/remote|bundesweit/i.test(r));
     if (orte.length) {
       const regionen = orte.length > 1 ? orte.slice(0, -1).join(", ") + " und " + orte[orte.length - 1] : orte[0];
-      $("unterzeile").textContent = "Stellen in Wirtschaftsprüfung, Revision, Transaction Services, M&A, Restrukturierung " +
-        `und Private Equity in ${regionen}${orte.length < regionListe.length ? ", dazu Remote-Stellen" : ""}.`;
+      $("unterzeile").textContent =
+        `Finance- und Advisory-Stellen in ${regionen}${orte.length < regionListe.length ? ", dazu Remote-Stellen" : ""}.`;
     }
 
     const stand = standText(daten.stand);
