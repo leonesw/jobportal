@@ -110,6 +110,8 @@ begriffe = [
   "M&A",
   "Mergers Acquisitions",
   "Corporate Finance",
+  "Investment Banking",
+  "Corporate Development",
   "Debt Advisory",
   "Private Equity",
   "Valuation",
@@ -154,6 +156,13 @@ begriffe = [
 "M&A / Corporate Finance" = [
   "m&a", "m & a", "mergers", "acquisitions", "corporate finance",
   "transaction strategy", "post merger", "carve-out", "carve out",
+]
+"Investment Banking" = [
+  "investment bank", "investmentbank", "equity capital markets", "financial sponsors",
+]
+"Corporate Development" = [
+  "corporate development", "corporate strategy", "unternehmensentwicklung",
+  "konzernentwicklung", "konzernstrategie",
 ]
 "Debt Advisory" = [
   "debt advisory", "debt finance", "debt capital", "debt & capital",
