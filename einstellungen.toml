@@ -69,6 +69,21 @@ remote_region = "Bundesweit / Remote"
 
 
 # --------------------------------------------------------------
+#  Jobalarme: Mails von LinkedIn, StepStone und Indeed aus einem
+#  eigenen Postfach. Adresse und App-Passwort stehen NICHT hier,
+#  sondern als GitHub-Secrets RADAR_MAIL_ADRESSE und
+#  RADAR_MAIL_PASSWORT (siehe Anleitung zu den Jobalarmen).
+#  Es gelten dieselben Regionen, Bereiche und Ausschlüsse.
+# --------------------------------------------------------------
+
+[jobalarme]
+# Postfach-Server (Gmail: imap.gmail.com)
+server = "imap.gmail.com"
+# So viele Tage bleibt eine Stelle aus einem Jobalarm im Radar
+tage = 30
+
+
+# --------------------------------------------------------------
 #  Suchbegriffe: Mit jedem Begriff wird in jeder Region gesucht.
 #  Lieber genaue Begriffe als allgemeine, sonst kommen viele
 #  Fehltreffer (z. B. "Sanierung" findet vor allem Bauberufe).

@@ -369,7 +369,8 @@
   const STANDARD = { zeitraum: "alle", arten: ["Vollzeit"], stufen: [], bereiche: [], regionen: [], quellen: [], sortierung: "neu" };
   const GRUPPEN = ["arten", "stufen", "bereiche", "regionen", "quellen"];
   const KARRIERESEITE = "Karriereseite";
-  const QUELLEN = [KARRIERESEITE, "Arbeitsagentur"];
+  const JOBALARME = ["LinkedIn", "StepStone", "Indeed"];
+  const QUELLEN = [KARRIERESEITE, "Arbeitsagentur", ...JOBALARME];
   const OHNE_STUFE = "Ohne Angabe";
   const STUFEN = ["Berufseinstieg", "Senior", "Manager", "Director & Partner", OHNE_STUFE];
   const STUFEN_HINWEISE = {
@@ -569,6 +570,7 @@
     baueGruppe("gruppe-regionen", "regionen", "checkbox", regionListe.map((r) => [r, r]));
     baueGruppe("gruppe-quellen", "quellen", "checkbox", quellenListe.map((q) => q === KARRIERESEITE
       ? [q, "Karriereseiten", firmenZahl ? `direkt von ${firmenZahl} Firmen abgefragt` : "direkt von den Firmen"]
+      : JOBALARME.includes(q) ? [q, q, "aus deinen Jobalarmen"]
       : [q, q, "Jobsuche der Bundesagentur"]));
     $("gruppe-regionen").hidden = regionListe.length < 2;
     $("gruppe-quellen").hidden = quellenListe.length < 2;
@@ -644,6 +646,10 @@
         class: "quelle", tabindex: "0", text: "Karriereseite",
         title: nurDort ? "Direkt von der Karriereseite der Firma, nicht bei der Arbeitsagentur" : "Steht auch auf der Karriereseite der Firma",
       }));
+    }
+    const alarm = JOBALARME.find((q) => s.quellen.includes(q));
+    if (alarm) {
+      marken.append(el("span", { class: "quelle", tabindex: "0", text: alarm, title: `Aus deinem ${alarm}-Jobalarm` }));
     }
     if (extern) marken.append(el("a", { href: extern, target: "_blank", rel: "noopener", text: "Originalanzeige" }));
 
@@ -786,8 +792,13 @@
     quellenListe = QUELLEN.filter((q) => vorhandeneQuellen.has(q));
     const firmenQuelle = (daten.quellen || {}).Karriereseiten || {};
     firmenZahl = Number(firmenQuelle.firmen) || 0;
-    if (firmenZahl) {
-      $("fuss-quellen").textContent = `Quellen: Jobsuche der Bundesagentur für Arbeit und die Karriereseiten von ${firmenZahl} Firmen (Liste in firmen.toml). Die Liste wird jede Stunde automatisch aktualisiert.`;
+    const alarmQuelle = (daten.quellen || {}).Jobalarme || {};
+    const mitAlarmen = alarmQuelle.status && alarmQuelle.status !== "nicht eingerichtet";
+    if (firmenZahl || mitAlarmen) {
+      $("fuss-quellen").textContent = "Quellen: Jobsuche der Bundesagentur für Arbeit" +
+        (firmenZahl ? `, die Karriereseiten von ${firmenZahl} Firmen (Liste in firmen.toml)` : "") +
+        (mitAlarmen ? " und deine Jobalarme von LinkedIn, StepStone und Indeed" : "") +
+        ". Die Liste wird jede Stunde automatisch aktualisiert.";
     }
 
     // Gespeicherte Auswahl nur übernehmen, wenn es die Werte noch gibt
@@ -830,6 +841,8 @@
       zeigeHinweis("Die Daten sind älter als drei Stunden. Prüfe bei GitHub unter „Actions“, ob der Ablauf „Stellen sammeln“ noch läuft.");
     } else if (firmenQuelle.status === "fehler") {
       zeigeHinweis("Die Karriereseiten der Firmen waren beim letzten Abruf nicht erreichbar. Ihre bisherigen Stellen bleiben sichtbar; der nächste Lauf versucht es erneut.");
+    } else if (alarmQuelle.status === "fehler") {
+      zeigeHinweis("Das Postfach für deine Jobalarme war beim letzten Abruf nicht erreichbar. Prüfe bei GitHub die Secrets RADAR_MAIL_ADRESSE und RADAR_MAIL_PASSWORT. Bisherige Stellen aus Jobalarmen bleiben sichtbar.");
     }
 
     baueFilter();

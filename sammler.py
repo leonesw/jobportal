@@ -19,10 +19,13 @@ Benötigt nur Python 3.11 oder neuer, keine Zusatzpakete.
 
 from __future__ import annotations
 
+import email
+import email.policy
 import email.utils
 import gzip
 import hashlib
 import html
+import imaplib
 import json
 import os
 import re
@@ -35,6 +38,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 
 try:
@@ -393,6 +397,7 @@ def lade_einstellungen() -> dict:
     ausnahmen = sorted({normalisiere(w) for w in ausschluss_roh.get("ausnahmen", []) if normalisiere(w)},
                        key=len, reverse=True)
     firmen_cfg = roh.get("firmen", {})
+    alarme_cfg = roh.get("jobalarme", {})
 
     if not regionen or not begriffe or not bereiche:
         sys.exit("einstellungen.toml braucht mindestens eine Region, einen Suchbegriff und einen Bereich.")
@@ -416,6 +421,10 @@ def lade_einstellungen() -> dict:
         "remote": bool(firmen_cfg.get("remote_einbeziehen", True)),
         "remote_region": str(firmen_cfg.get("remote_region", "Bundesweit / Remote")),
         "firmen": firmen,
+        "jobalarme": {
+            "server": str(alarme_cfg.get("server", "imap.gmail.com")),
+            "tage": max(1, min(90, int(alarme_cfg.get("tage", 30)))),
+        },
     }
 
 
@@ -1263,9 +1272,10 @@ def herkunft_von(firma: dict) -> str:
     return f"{firma['system']}:{firma.get('konto') or firma.get('mandant') or normalisiere(firma['name']).replace(' ', '-')}"
 
 
-def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter, proben: dict) -> dict | None:
-    """Wendet Regionen, Ausschlussliste, Bereiche und Stufen auf eine Firmen-Stelle an.
-    In `proben` landen Beispiele verworfener Stellen (für die Diagnose)."""
+def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter, proben: dict,
+                      quelle: str = QUELLE_FIRMA, herkunft: str | None = None, praefix: str = "fs-") -> dict | None:
+    """Wendet Regionen, Ausschlussliste, Bereiche und Stufen auf eine Firmen-Stelle an
+    (auch für Stellen aus Jobalarmen). In `proben` landen Beispiele verworfener Stellen."""
     titel = bereinige_titel(e["titel"])
     titel_norm = normalisiere(titel)
     if not titel or not e.get("link"):
@@ -1308,9 +1318,9 @@ def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter, proben:
         proben["kein_bereich"].append(titel)
         return None
 
-    herkunft = herkunft_von(firma)
+    herkunft = herkunft or herkunft_von(firma)
     stelle = {
-        "id": kurz_id(f"{herkunft}|{e['id']}", "fs-"),
+        "id": kurz_id(f"{herkunft}|{e['id']}", praefix),
         "titel": titel,
         # Angezeigt wird der Name aus firmen.toml (nicht Unterfirmen wie "60 TWS" bei Nexia)
         "firma": firma["name"],
@@ -1322,8 +1332,8 @@ def baue_firmenstelle(e: dict, firma: dict, cfg: dict, zaehler: Counter, proben:
         "stufen": stufen,
         "veroeffentlicht": (e.get("datum") or None) and e["datum"].isoformat(),
         "link": e["link"],
-        "quelle": QUELLE_FIRMA,
-        "quellen": [QUELLE_FIRMA],
+        "quelle": quelle,
+        "quellen": [quelle],
         "herkunft": herkunft,
         # Namensbestandteile zum Erkennen derselben Anzeige bei der Arbeitsagentur
         "_kern": firmenkern(" ".join([firma["name"], e.get("firma") or "", *firma.get("aliase", [])])),
@@ -1380,6 +1390,383 @@ def sammle_firmen(cfg: dict, heute: date, protokoll: list) -> tuple[list[dict], 
     return stellen, bericht, ausgefallen
 
 
+# --- Jobalarme aus einem eigenen Postfach ---------------------------------------
+#
+# LinkedIn, StepStone und Indeed verschicken Jobalarme per Mail. Diese Mails landen
+# in einem eigenen Postfach nur für das Radar. Das Radar liest dort ausschließlich
+# Mails dieser Absender, nur lesend: Nichts wird gelöscht, verschoben oder als gelesen
+# markiert. Adresse und App-Passwort kommen aus den GitHub-Secrets RADAR_MAIL_ADRESSE
+# und RADAR_MAIL_PASSWORT und erscheinen nirgends im Protokoll.
+
+QUELLE_MAIL = "Jobalarme"
+JOBALARM_ABSENDER = {"linkedin.com": "LinkedIn", "stepstone.de": "StepStone", "indeed.com": "Indeed"}
+MAX_MAILS = 400  # höchstens so viele Mails je Lauf
+
+# Beschriftungen von Knöpfen, die kein Stellentitel sind
+_KNOPF_TEXTE = re.compile(
+    r"^(?:view job|view jobs|see job|see all jobs|apply|apply now|easy apply|job ansehen|stelle ansehen|jetzt bewerben|"
+    r"bewerben|ansehen|mehr|mehr anzeigen|details|zur stelle|zum job|zur anzeige|alle jobs anzeigen|"
+    r"alle anzeigen|weitere jobs|job speichern|speichern)$", re.I)
+# Hinweise, die LinkedIn hinter den Ort hängt
+_ORT_ZUSAETZE = re.compile(
+    r"\s*(?:\((?:hybrid|remote|vor ort|on-site|onsite|homeoffice|home office|teilweise remote)\)"
+    r"|aktiv auf personalsuche|actively recruiting|schnellbewerbung|easy apply|einfach bewerben|promoted|"
+    r"gesponsert|beworben|applied|frühe bewerbung|early applicant|\d+\s+(?:kontakte?|connections?|alumni|ehemalige)\b.*"
+    r"|vor \d+ (?:minuten?|stunden?|tagen?|wochen?)|\d+ (?:minutes?|hours?|days?|weeks?) ago).*$", re.I)
+# Personalvermittler (gilt bei ohne_personalvermittlung = true, wie bei der Arbeitsagentur)
+_VERMITTLER = re.compile(
+    r"personalberatung|personalvermittl|personaldienstleist|personal service|recruitment|recruiting gmbh|headhunt|"
+    r"executive search|\bhays\b|robert half|michael page|page personnel|robert walters|randstad|adecco|manpower|"
+    r"amadeus fire|experis|morgan mckinley|selby jennings|phaidon international|goodman masson|hunter bond|"
+    r"\bgulp\b|orizon|persona service|tempton|avantgarde experts", re.I)
+
+_LEERE_TAGS = {"br", "img", "hr", "meta", "link", "input", "col", "area", "base", "wbr", "source", "track"}
+_IMPLIZIT = {"p": {"div", "table", "td", "body"}, "li": {"ul", "ol"}, "option": {"select"},
+             "td": {"tr", "table"}, "th": {"tr", "table"}, "tr": {"table", "tbody", "thead", "tfoot"}}
+
+
+class _Baum(HTMLParser):
+    """Einfacher HTML-Baum aus Knoten {"tag", "attrs", "kinder", "eltern"}; Text als str."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.wurzel = {"tag": "#wurzel", "attrs": {}, "kinder": [], "eltern": None}
+        self.aktuell = self.wurzel
+        self._ignorieren = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("style", "script", "head", "title"):
+            self._ignorieren += 1
+            return
+        if tag in _IMPLIZIT:  # z. B. <tr> ohne </tr>: das offene Element derselben Art schließen
+            k = self.aktuell
+            while k is not None and k["tag"] not in _IMPLIZIT[tag] and k["tag"] != tag:
+                k = k["eltern"]
+            if k is not None and k["tag"] == tag and k["eltern"] is not None:
+                self.aktuell = k["eltern"]
+        knoten = {"tag": tag, "attrs": {k: (v or "") for k, v in attrs}, "kinder": [], "eltern": self.aktuell}
+        self.aktuell["kinder"].append(knoten)
+        if tag not in _LEERE_TAGS:
+            self.aktuell = knoten
+
+    def handle_startendtag(self, tag, attrs):
+        if tag in ("style", "script", "head", "title"):
+            return
+        self.aktuell["kinder"].append({"tag": tag, "attrs": {k: (v or "") for k, v in attrs}, "kinder": [],
+                                       "eltern": self.aktuell})
+
+    def handle_endtag(self, tag):
+        if tag in ("style", "script", "head", "title"):
+            self._ignorieren = max(0, self._ignorieren - 1)
+            return
+        k = self.aktuell
+        while k is not None and k["tag"] != tag:
+            k = k["eltern"]
+        if k is not None and k["eltern"] is not None:
+            self.aktuell = k["eltern"]
+
+    def handle_data(self, data):
+        if not self._ignorieren and data:
+            self.aktuell["kinder"].append(data)
+
+
+def _baum(html_text: str) -> dict:
+    parser = _Baum()
+    try:
+        parser.feed(html_text)
+        parser.close()
+    except Exception:  # noqa: BLE001 – kaputtes HTML: mit dem bisher Gelesenen weiter
+        pass
+    return parser.wurzel
+
+
+def _knoten(knoten: dict, tag: str):
+    """Alle Nachfahren mit diesem Tag, in Dokument-Reihenfolge."""
+    for kind in knoten["kinder"]:
+        if isinstance(kind, dict):
+            if kind["tag"] == tag:
+                yield kind
+            yield from _knoten(kind, tag)
+
+
+def _textteile(knoten: dict) -> list[str]:
+    """Die sichtbaren Textstücke eines Knotens (versteckte Elemente ausgenommen)."""
+    teile = []
+    for kind in knoten["kinder"]:
+        if isinstance(kind, str):
+            text = re.sub(r"\s+", " ", kind.replace("‌", "").replace("­", "")).strip()
+            if text:
+                teile.append(text)
+        elif not re.search(r"display\s*:\s*none", kind["attrs"].get("style", ""), re.I):
+            teile += _textteile(kind)
+    return teile
+
+
+def _text(knoten: dict) -> str:
+    return " ".join(_textteile(knoten)).strip()
+
+
+def _vorfahr(knoten: dict, tag: str) -> dict | None:
+    k = knoten["eltern"]
+    while k is not None and k["tag"] != tag:
+        k = k["eltern"]
+    return k
+
+
+def _naechster(knoten: dict, tag: str) -> dict | None:
+    """Das nächste Geschwister-Element mit diesem Tag."""
+    eltern = knoten["eltern"]
+    if eltern is None:
+        return None
+    gefunden = False
+    for kind in eltern["kinder"]:
+        if kind is knoten:
+            gefunden = True
+        elif gefunden and isinstance(kind, dict) and kind["tag"] == tag:
+            return kind
+    return None
+
+
+def _entpackt(href: str) -> str:
+    """Tracking-Weiterleitungen: Steckt die Ziel-Adresse kodiert im Link, wird sie lesbar."""
+    url = html.unescape(href or "").strip()
+    for _ in range(3):
+        neu = urllib.parse.unquote(url)
+        if neu == url:
+            break
+        url = neu
+    return url
+
+
+def _jobschluessel(quelle: str, href: str) -> tuple[str, str] | None:
+    """(Kennung, Link ohne Tracking) einer Stellenanzeige – oder None."""
+    url = _entpackt(href)
+    if quelle == "LinkedIn":
+        m = re.search(r"linkedin\.com/(?:comm/)?jobs/view/(?:[\w%.-]*?-)?(\d{6,})", url)
+        return (m.group(1), f"https://www.linkedin.com/jobs/view/{m.group(1)}/") if m else None
+    if quelle == "StepStone":
+        m = re.search(r"(https?://(?:www\.)?stepstone\.de/stellenangebote--[^\s\"'<>?#&]*?--(\d{5,})-inline\.html)", url)
+        if m:
+            return m.group(2), m.group(1).replace("http://", "https://")
+        m = re.search(r"stepstone\.de/(?:job|jobs|stellenangebot)/(\d{5,})", url)
+        return (m.group(1), f"https://www.stepstone.de/job/{m.group(1)}") if m else None
+    if quelle == "Indeed":
+        m = re.search(r"indeed\.[a-z.]+/[^\s\"'<>]*?[?&]jk=([0-9a-f]{16})", url)
+        return (m.group(1), f"https://de.indeed.com/viewjob?jk={m.group(1)}") if m else None
+    return None
+
+
+def _firma_und_ort(texte: list[str]) -> tuple[str, str]:
+    """Firma und Ort aus den Textstücken einer Stellenkarte (ohne den Titel)."""
+    texte = [t for t in texte if not _KNOPF_TEXTE.match(t)]
+    zusammen = " ".join(texte)
+    if "·" in zusammen:  # LinkedIn: "Firma · Ort (Hybrid)", auch wenn der Punkt ein eigenes Element ist
+        teile = [x.strip() for x in zusammen.split("·") if x.strip()]
+        if len(teile) >= 2:
+            return teile[0], teile[1]
+    if len(texte) >= 2:
+        return texte[0], texte[1]
+    if texte and " - " in texte[0]:  # "Firma - Ort"
+        firma, _, ort = texte[0].partition(" - ")
+        return firma.strip(), ort.strip()
+    return (texte[0] if texte else ""), ""
+
+
+def ohne_zugangsdaten(text: str) -> str:
+    """Adresse und Passwort des Postfachs aus einer Meldung entfernen (das Protokoll ist öffentlich)."""
+    for name in ("RADAR_MAIL_ADRESSE", "RADAR_MAIL_PASSWORT"):
+        wert = os.environ.get(name, "").strip()
+        for variante in {wert, re.sub(r"\s+", "", wert)}:
+            if len(variante) >= 4:
+                text = text.replace(variante, "***")
+    return text
+
+
+def _kartentexte(anker: dict, quelle: str, andere: set[str]) -> list[str]:
+    """Textstücke der kleinsten umgebenden "Karte", die nur diese eine Stelle enthält."""
+    k = anker
+    for _ in range(6):
+        k = k["eltern"]
+        if k is None:
+            break
+        if {s[0] for a in _knoten(k, "a") if (s := _jobschluessel(quelle, a["attrs"].get("href", "")))} & andere:
+            break
+        texte = [t for t in _textteile(k) if not _KNOPF_TEXTE.match(t)]
+        if len(texte) >= 3 or any("·" in t for t in texte):
+            return texte
+    return []
+
+
+def stellen_aus_jobalarm(quelle: str, html_text: str) -> list[dict]:
+    """Stellen aus dem HTML einer Jobalarm-Mail: je Stelle Titel, Firma, Ort und Link."""
+    baum = _baum(html_text)
+    gruppen: dict[str, dict] = {}
+    for a in _knoten(baum, "a"):
+        treffer = _jobschluessel(quelle, a["attrs"].get("href", ""))
+        if treffer:
+            gruppen.setdefault(treffer[0], {"link": treffer[1], "anker": []})["anker"].append(a)
+
+    stellen = []
+    for kennung, gruppe in gruppen.items():
+        andere = {k for k in gruppen if k != kennung}
+        # Mehrere Links je Stelle (Logo, ganze Karte, Titel): Der kürzeste Text ist der Titel.
+        kandidaten = sorted(((len(t), t, a) for a in gruppe["anker"]
+                             if (t := _text(a)) and len(t) >= 3 and not _KNOPF_TEXTE.match(t)),
+                            key=lambda x: x[0])
+        titel, titel_anker = (kandidaten[0][1], kandidaten[0][2]) if kandidaten else ("", gruppe["anker"][0])
+        firma, ort = "", ""
+        if "·" in titel:  # die ganze Karte ist ein Link: "Titel  Firma · Ort"
+            teile = [x for x in _textteile(titel_anker) if not _KNOPF_TEXTE.match(x)]
+            titel = teile[0] if teile and "·" not in teile[0] else ""
+            firma, ort = _firma_und_ort(teile[1:])
+
+        # Firma und Ort stehen in der nächsten Tabellenzeile (LinkedIn) oder in der Karte drumherum.
+        if titel and not firma:
+            zeile = _vorfahr(titel_anker, "tr")
+            nachbar = _naechster(zeile, "tr") if zeile else None
+            if nachbar is not None and not any(_jobschluessel(quelle, a["attrs"].get("href", ""))
+                                               for a in _knoten(nachbar, "a")):
+                firma, ort = _firma_und_ort(_textteile(nachbar))
+        if not titel or not firma:
+            texte = []
+            for a in [titel_anker] + [x for x in gruppe["anker"] if x is not titel_anker]:
+                texte = _kartentexte(a, quelle, andere)
+                if texte:
+                    break
+            if not titel and texte:  # Titel ist kein Link-Text: das erste Textstück der Karte
+                titel, texte = texte[0], texte[1:]
+            texte = [x for x in texte if x != titel]
+            if texte and not firma:
+                firma, ort = _firma_und_ort(texte)
+        if not titel or "·" in titel:
+            continue
+        ort = _ORT_ZUSAETZE.sub("", ort).strip(" ,·-")
+        stellen.append({"id": kennung, "titel": titel, "firma": firma, "ort": ort, "link": gruppe["link"]})
+    return stellen
+
+
+def _imap_datum(tag: date) -> str:
+    monate = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    return f"{tag.day:02d}-{monate[tag.month - 1]}-{tag.year}"
+
+
+def lies_jobalarme(cfg: dict, heute: date, alte_quelle: dict) -> tuple[list[dict], dict]:
+    """Liest die Jobalarm-Mails aus dem Postfach. Liefert (Rohstellen, Bericht)."""
+    adresse = os.environ.get("RADAR_MAIL_ADRESSE", "").strip()
+    passwort = re.sub(r"\s+", "", os.environ.get("RADAR_MAIL_PASSWORT", ""))  # App-Passwort oft mit Leerzeichen
+    bericht: dict = {"status": "nicht eingerichtet", "mails": 0, "je_absender": {}, "mails_ohne_stellen": 0}
+    if not adresse or not passwort:
+        return [], bericht
+
+    tage = cfg["jobalarme"]["tage"]
+    seit = heute - timedelta(days=tage)
+    letzter = str(alte_quelle.get("letzter_erfolg") or "")[:10]
+    if letzter:  # Nach dem ersten Lauf reichen die letzten Tage (mit Sicherheitsabstand)
+        try:
+            seit = max(seit, date.fromisoformat(letzter) - timedelta(days=2))
+        except ValueError:
+            pass
+
+    roh: list[dict] = []
+    with imaplib.IMAP4_SSL(cfg["jobalarme"]["server"], 993, timeout=60) as imap:
+        imap.login(adresse, passwort)
+        imap.select("INBOX", readonly=True)
+        uids: set[bytes] = set()
+        for domain in JOBALARM_ABSENDER:
+            _, antwort = imap.uid("SEARCH", None, "SINCE", _imap_datum(seit), "FROM", f'"{domain}"')
+            if antwort and antwort[0]:
+                uids |= set(antwort[0].split())
+        for uid in sorted(uids, key=int)[-MAX_MAILS:]:
+            _, teile = imap.uid("FETCH", uid, "(BODY.PEEK[])")
+            rohmail = next((t[1] for t in teile or [] if isinstance(t, tuple) and len(t) > 1), None)
+            if not rohmail:
+                continue
+            try:
+                nachricht = email.message_from_bytes(rohmail, policy=email.policy.default)
+                absender = email.utils.parseaddr(str(nachricht.get("From", "")))[1].lower()
+            except Exception:  # noqa: BLE001
+                bericht["mails_fehlerhaft"] = bericht.get("mails_fehlerhaft", 0) + 1
+                continue
+            quelle = next((q for d, q in JOBALARM_ABSENDER.items()
+                           if absender.endswith("@" + d) or absender.endswith("." + d)), None)
+            if not quelle:
+                continue
+            bericht["mails"] += 1
+            zaehler = bericht["je_absender"].setdefault(quelle, {"mails": 0, "stellen": 0})
+            zaehler["mails"] += 1
+            try:
+                gesendet = email.utils.parsedate_to_datetime(str(nachricht.get("Date", "")))
+                tag = gesendet.astimezone(BERLIN).date()
+            except (TypeError, ValueError):
+                tag = heute
+            try:
+                teil = nachricht.get_body(preferencelist=("html",))
+                html_text = teil.get_content() if teil is not None else ""
+                stellen = stellen_aus_jobalarm(quelle, html_text) if html_text else []
+            except Exception:  # noqa: BLE001 – eine kaputte Mail hält die anderen nicht auf
+                bericht["mails_fehlerhaft"] = bericht.get("mails_fehlerhaft", 0) + 1
+                stellen = []
+            if not stellen:
+                bericht["mails_ohne_stellen"] += 1
+            zaehler["stellen"] += len(stellen)
+            for s in stellen:
+                roh.append({"id": s["id"], "titel": s["titel"], "firma": s["firma"], "orte": [s["ort"]] if s["ort"] else [],
+                            "datum": tag, "link": s["link"], "hinweise": [], "arten": set(), "stufe": None,
+                            "quelle": quelle})
+    bericht["status"] = "ok"
+    return roh, bericht
+
+
+def baue_jobalarm_stellen(roh: list[dict], cfg: dict, bericht: dict) -> list[dict]:
+    """Filter wie bei den Karriereseiten; dieselbe Stelle aus mehreren Mails zählt einmal (frühestes Datum)."""
+    zaehler: Counter = Counter()
+    proben = {"ausserhalb": Counter(), "ausgeschlossen": [], "kein_bereich": []}
+    frueheste: dict[tuple, dict] = {}
+    for e in roh:
+        schluessel = (e["quelle"], e["id"])
+        if schluessel not in frueheste or e["datum"] < frueheste[schluessel]["datum"]:
+            frueheste[schluessel] = e
+    stellen = []
+    for e in frueheste.values():
+        if cfg["ohne_pav"] and _VERMITTLER.search(e["firma"] or ""):
+            zaehler["vermittler"] += 1
+            continue
+        firma = {"name": e["firma"] or "Arbeitgeber unbekannt"}
+        stelle = baue_firmenstelle(e, firma, cfg, zaehler, proben, quelle=e["quelle"],
+                                   herkunft=f"mail:{e['quelle'].lower()}", praefix="ja-")
+        if stelle:
+            stellen.append(stelle)
+    bericht.update(erkannt=len(frueheste), im_radar=zaehler["im_radar"], ausserhalb=zaehler["ausserhalb"],
+                   kein_bereich=zaehler["kein_bereich"], ausgeschlossen=zaehler["ausgeschlossen"],
+                   vermittler=zaehler["vermittler"],
+                   beispiele_kein_bereich=sorted(set(proben["kein_bereich"]))[:15],
+                   orte_ausserhalb=[o for o, _ in proben["ausserhalb"].most_common(8)])
+    return stellen
+
+
+def verbinde_jobalarme(mail_stellen: list[dict], ba_stellen: dict, firmen_stellen: list[dict],
+                       cfg: dict) -> tuple[list[dict], int]:
+    """Steht eine Stelle aus einem Jobalarm schon bei der Arbeitsagentur, auf einer Karriereseite
+    oder in einem anderen Jobalarm, erscheint sie nur einmal."""
+    index: dict[str, list[tuple[dict, set]]] = {}
+    for s in ba_stellen.values():
+        index.setdefault(titel_schluessel(s["titel"], cfg), []).append((s, firmenkern(s["firma"])))
+    for s in firmen_stellen:
+        index.setdefault(titel_schluessel(s["titel"], cfg), []).append((s, s.get("_kern") or firmenkern(s["firma"])))
+    eigene, doppelt = [], 0
+    for ms in mail_stellen:
+        schluessel = titel_schluessel(ms["titel"], cfg)
+        ziel = next((s for s, kern in index.get(schluessel, [])
+                     if set(s["regionen"]) & set(ms["regionen"]) and kern & ms["_kern"]), None)
+        if ziel is not None:
+            doppelt += 1
+            ziel.setdefault("_verbunden", []).append(ms["id"])
+        else:
+            eigene.append(ms)
+            index.setdefault(schluessel, []).append((ms, ms["_kern"]))
+    return eigene, doppelt
+
+
 # --- Zusammenführen und Speichern ------------------------------------------------
 
 
@@ -1426,12 +1813,13 @@ def verbinde_dubletten(ba_stellen: dict, firmen_stellen: list[dict], cfg: dict) 
 
 
 def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei, jetzt, heute, cfg,
-                    erfolgreich=frozenset()):
+                    erfolgreich=frozenset(), mail_grenze=None):
     """Neue Stellen mit dem letzten Stand verbinden; liefert (stellen, anzahl_neu).
 
     neu_dabei: Quellen, die zum ersten Mal erfolgreich abgefragt wurden. Ihre Stellen
     gelten nicht als "gerade eben entdeckt", sondern erscheinen mit ihrem Datum.
     erfolgreich: Quellen, die in diesem Lauf erreichbar waren (für die Nachfrist).
+    mail_grenze: Stellen aus Jobalarmen vom diesem Tag an bleiben im Radar (None: Jobalarme aus).
     """
     stellen, neu = {}, 0
     # Stand früher bei Arbeitsagentur UND Karriereseite, ist die Anzeige bei der
@@ -1497,10 +1885,30 @@ def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_d
     grenze_ausfall = (heute - timedelta(days=7)).isoformat()
     grenze_nachfrist = (jetzt - timedelta(hours=NACHFRIST_STUNDEN)).isoformat().replace("+00:00", "Z")
     uebernommen = {i for s in stellen.values() for i in s.get("alt", [])}
+    frisch_index: dict[str, list[dict]] = {}
+    for s in stellen.values():
+        if not str(s.get("herkunft", "ba")).startswith("mail:"):
+            frisch_index.setdefault(titel_schluessel(s["titel"], cfg), []).append(s)
     for sid, alt in alte_stellen.items():
         if sid in stellen or sid in uebernommen:
             continue
         herkunft = alt.get("herkunft", "ba")
+        if herkunft.startswith("mail:"):
+            # Stellen aus Jobalarmen bleiben bis zu `tage` Tage nach dem Alarm, auch wenn die Mail
+            # nicht mehr gelesen wird. Steht die Stelle inzwischen bei der Arbeitsagentur oder auf
+            # einer Karriereseite, geht sie in dieser Anzeige auf (Datum und Merkliste bleiben).
+            if mail_grenze is None or str(alt.get("gesehen", ""))[:10] < mail_grenze or not passt_noch(alt, cfg):
+                continue
+            zwilling = next((s for s in frisch_index.get(titel_schluessel(alt.get("titel", ""), cfg), [])
+                             if set(s.get("regionen", [])) & set(alt.get("regionen", []))
+                             and firmenkern(s.get("firma", "")) & firmenkern(alt.get("firma", ""))), None)
+            if zwilling is not None:
+                zwilling["alt"] = sorted(set(zwilling.get("alt", [])) | {sid})
+                if str(alt.get("gesehen", "")) < str(zwilling.get("gesehen", "")):
+                    zwilling["gesehen"], zwilling["genau"] = alt["gesehen"], bool(alt.get("genau"))
+            else:
+                stellen[sid] = alt
+            continue
         vermisst = str(alt.get("vermisst_seit") or jetzt_text)
         if herkunft in ausgefallen:
             behalten = vermisst >= grenze_ausfall
@@ -1597,6 +2005,28 @@ def main() -> None:
     firmen_fehler = sum(1 for b in firmen_bericht if b["status"] != "ok")
     firmen_status = ("ok" if not firmen_fehler else
                      "fehler" if firmen_fehler == len(firmen_bericht) else "teilweise") if firmen_bericht else "keine"
+    dauer_firmen = time.monotonic() - start - dauer_ba
+
+    # 3. Jobalarme aus dem eigenen Postfach
+    start_mail = time.monotonic()
+    alte_alarme = alte_quellen.get(QUELLE_MAIL) or {}
+    try:
+        mail_roh, mail_bericht = lies_jobalarme(cfg, heute, alte_alarme)
+        mail_stellen = baue_jobalarm_stellen(mail_roh, cfg, mail_bericht)
+        mail_stellen, mail_doppelt = verbinde_jobalarme(mail_stellen, ba_stellen, firmen_stellen, cfg)
+    except Exception as fehler:  # noqa: BLE001
+        meldung = re.sub(r"^b'(.*)'$", r"\1", ohne_zugangsdaten(str(fehler)).strip())
+        if re.search(r"AUTHENTICATIONFAILED|invalid credentials|application-specific password", meldung, re.I):
+            meldung = "Anmeldung abgelehnt – Adresse oder App-Passwort in den GitHub-Secrets prüfen"
+        mail_stellen, mail_doppelt = [], 0
+        mail_bericht = {"status": "fehler", "mails": 0, "je_absender": {}, "mails_ohne_stellen": 0,
+                        "fehler": meldung[:200]}
+        firmen_protokoll.append(f"Jobalarme: {mail_bericht['fehler']}")
+    mail_bericht["doppelt"] = mail_doppelt
+    dauer_mail = time.monotonic() - start_mail
+    mail_herkuenfte = {f"mail:{q.lower()}" for q in JOBALARM_ABSENDER.values()}
+    mail_grenze = (None if mail_bericht["status"] == "nicht eingerichtet"
+                   else (heute - timedelta(days=cfg["jobalarme"]["tage"])).isoformat())
 
     # 3. Zusammenführen. Quellen, die zum ersten Mal dabei sind, bringen keine "neuen" Stellen.
     alte_firmen = alte_quellen.get(QUELLE_FIRMA + "n") or {}
@@ -1606,13 +2036,20 @@ def main() -> None:
     erfolgreich = {b["herkunft"] for b in firmen_bericht if b["status"] == "ok"}
     if status != "fehler":
         erfolgreich.add("ba")
-    neu_dabei = erfolgreich - bekannt
-    stellen, neu = fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei,
-                                   jetzt, heute, cfg, erfolgreich - ausgefallen)
+    if mail_bericht["status"] == "ok":
+        erfolgreich |= mail_herkuenfte
+    bekannt_mail = set(alte_alarme.get("bekannt") or [])
+    neu_dabei = erfolgreich - bekannt - bekannt_mail
+    stellen, neu = fuehre_zusammen(ba_stellen, firmen_stellen + mail_stellen, alte_stellen, ausgefallen, neu_dabei,
+                                   jetzt, heute, cfg, erfolgreich - ausgefallen, mail_grenze)
     # Davon von Firmen, die gerade erst in firmen.toml aufgenommen wurden
     neu_von_neuen_firmen = sum(1 for sid, s in stellen.items()
                                if s.get("herkunft", "ba") != "ba" and s["herkunft"] in neu_dabei
+                               and not s["herkunft"].startswith("mail:")
                                and sid not in alte_stellen and not s.get("alt"))
+    neu_aus_ersten_alarmen = sum(1 for sid, s in stellen.items()
+                                 if str(s.get("herkunft", "")).startswith("mail:") and s["herkunft"] in neu_dabei
+                                 and sid not in alte_stellen and not s.get("alt"))
     # Stellen in der Nachfrist: Quelle erreichbar, Stelle diesmal nicht geliefert
     in_nachfrist = [s for s in stellen.values()
                     if s.get("vermisst_seit") and s.get("herkunft", "ba") not in ausgefallen]
@@ -1627,6 +2064,7 @@ def main() -> None:
         "ausgeschlossen": [t for t, _ in beispiele["ausgeschlossen"].most_common(60)],
         "firmen": firmen_bericht,
         "nachfrist": sorted(f"{s.get('firma', '')}: {s.get('titel', '')}" for s in in_nachfrist)[:40],
+        "jobalarme": {k: v for k, v in mail_bericht.items() if k != "status"},
     })
 
     regionen_liste = [r["name"] for r in cfg["regionen"]]
@@ -1647,7 +2085,14 @@ def main() -> None:
                 "firmen": len(firmen_bericht),
                 "fehlgeschlagen": firmen_fehler,
                 "letzter_erfolg": zeitstempel if firmen_status in ("ok", "teilweise") else alte_firmen.get("letzter_erfolg"),
-                "bekannt": sorted((bekannt | erfolgreich) - {"ba"}),
+                "bekannt": sorted((bekannt | erfolgreich) - {"ba"} - mail_herkuenfte),
+            },
+            QUELLE_MAIL: {
+                "status": mail_bericht["status"],
+                "mails": mail_bericht.get("mails", 0),
+                "tage": cfg["jobalarme"]["tage"],
+                "letzter_erfolg": zeitstempel if mail_bericht["status"] == "ok" else alte_alarme.get("letzter_erfolg"),
+                "bekannt": sorted(bekannt_mail | (erfolgreich & mail_herkuenfte)),
             },
         },
         "bereiche": [name for name, _ in cfg["bereiche"]],
@@ -1661,20 +2106,37 @@ def main() -> None:
     schreibe_daten(daten)
 
     # --- Bericht für das Protokoll bei GitHub ---
-    dauer = time.monotonic() - start
     bereich_zahlen = Counter(b for s in stellen.values() for b in s["bereiche"])
     art_zahlen = Counter(a for s in stellen.values() for a in s["arten"])
     stufen_zahlen = Counter(x for s in stellen.values() for x in s.get("stufen", [OHNE_STUFE]))
     aus_firmen = sum(1 for s in stellen.values() if QUELLE_FIRMA in s.get("quellen", []))
+    aus_alarmen = sum(1 for s in stellen.values() if str(s.get("herkunft", "")).startswith("mail:"))
+    if mail_bericht["status"] == "nicht eingerichtet":
+        alarm_zeile = "- Jobalarme: nicht eingerichtet"
+    elif mail_bericht["status"] == "fehler":
+        alarm_zeile = (f"- Jobalarme: **fehler** – Postfach nicht erreichbar (Grund unter „Hinweise“), "
+                       f"bisherige Stellen aus Jobalarmen bleiben, Dauer {dauer_mail:.0f} s")
+    else:
+        je_absender = ", ".join(f"{q} {z['mails']}" for q, z in mail_bericht.get("je_absender", {}).items())
+        alarm_zeile = (f"- Jobalarme: **{mail_bericht['status']}** – Mails gelesen: {mail_bericht.get('mails', 0)}"
+                       + (f" ({je_absender})" if je_absender else "")
+                       + f", Stellen darin: {mail_bericht.get('erkannt', 0)}"
+                       + f", davon schon aus anderer Quelle im Radar: {mail_doppelt}"
+                       + f", Stellen aus Jobalarmen im Radar: {aus_alarmen}"
+                       + (f", Mails ohne erkennbare Stellen: {mail_bericht['mails_ohne_stellen']}"
+                          if mail_bericht.get("mails_ohne_stellen") else "")
+                       + f", Dauer {dauer_mail:.0f} s")
     zeilen = [
         f"## Stellenradar – Lauf vom {jetzt.astimezone(BERLIN):%d.%m.%Y, %H:%M} Uhr",
         "",
         f"- Arbeitsagentur: **{status}** – {abfragen} Abfragen, {fehlgeschlagen} fehlgeschlagen, "
         f"Schnittstelle `{endpunkt or 'keine erreichbar'}`, Dauer {dauer_ba:.0f} s",
         f"- Karriereseiten: **{firmen_status}** – {len(firmen_bericht)} Firmen, {firmen_fehler} nicht erreichbar, "
-        f"{aus_firmen} Stellen im Radar (davon {doppelt} auch bei der Arbeitsagentur), Dauer {dauer - dauer_ba:.0f} s",
+        f"{aus_firmen} Stellen im Radar (davon {doppelt} auch bei der Arbeitsagentur), Dauer {dauer_firmen:.0f} s",
+        alarm_zeile,
         f"- Stellen im Radar: **{len(stellen)}**, davon neu in diesem Lauf: **{neu}**"
         + (f" ({neu_von_neuen_firmen} davon von neu aufgenommenen Firmen)" if neu_von_neuen_firmen else "")
+        + (f" ({neu_aus_ersten_alarmen} davon aus dem ersten Abruf der Jobalarme)" if neu_aus_ersten_alarmen else "")
         + (f", diesmal nicht geliefert (bleiben noch bis zu {NACHFRIST_STUNDEN} Std.): {len(in_nachfrist)}"
            if in_nachfrist else "")
         + f", ohne Ortsangabe: {ohne_ort}",
@@ -1706,6 +2168,8 @@ def main() -> None:
         print(f"::warning::{fehlgeschlagen} von {abfragen} Abfragen sind fehlgeschlagen.")
     if firmen_fehler:
         print(f"::warning::{firmen_fehler} von {len(firmen_bericht)} Firmen-Karriereseiten waren nicht erreichbar.")
+    if mail_bericht["status"] == "fehler":
+        print("::warning::Das Postfach für die Jobalarme war nicht erreichbar. Details unter 'Hinweise'.")
 
 
 if __name__ == "__main__":
