@@ -98,11 +98,11 @@ ART_MUSTER = {
 #
 # Die Stufe wird aus dem Stellentitel gelesen. Der Titel wird an "/", "|", ","
 # und " - " in Teile zerlegt; für jeden Teil gilt die ERSTE passende Regel.
-# "(Senior) Consultant" bedeutet beide Stufen: Berufseinstieg und Senior.
+# Gemischte Ausschreibungen ("(Senior) Consultant", "Senior-/Consultant") zählen zur höheren Stufe.
+# Praktika, Werkstudenten- und Abschlussarbeiten haben keine Karrierestufe.
 
 STUFEN = ["Berufseinstieg", "Senior", "Manager", "Director & Partner"]
 OHNE_STUFE = "Ohne Angabe"
-STUDENTISCHE_ARTEN = {"Praktikum", "Werkstudent", "Abschlussarbeit", "Trainee"}
 
 STUFEN_REGELN = [
     # Eindeutige Hinweise auf den Einstieg haben Vorrang ("Junior Manager" = Einstieg)
@@ -499,8 +499,11 @@ def bestimme_arten(arten: set[str], titel_norm: str) -> list[str]:
 
 
 def bestimme_stufen(titel: str, arten: list[str]) -> list[str]:
-    """Karrierestufe(n) aus dem Titel; Praktika & Co. zählen als Berufseinstieg."""
-    if STUDENTISCHE_ARTEN & set(arten):
+    """Karrierestufe(n) aus dem Titel. Praktika, Werkstudenten- und Abschlussarbeiten haben
+    keine Karrierestufe (sie stehen nur unter ihrer Anstellungsart); Trainees zählen als Berufseinstieg."""
+    if set(arten) & {"Praktikum", "Werkstudent", "Abschlussarbeit"}:
+        return []
+    if "Trainee" in arten:
         return ["Berufseinstieg"]
 
     t = umlaute(titel)
@@ -526,10 +529,15 @@ def bestimme_stufen(titel: str, arten: list[str]) -> list[str]:
                 stufen.add(stufe)
                 break
 
-    # "(Senior) Manager" bleibt Manager; "(Senior) Consultant" wird Einstieg + Senior.
+    # "(Senior) Manager" bleibt Manager.
     if "Senior" in zusatz and stufen & {"Manager", "Director & Partner"}:
         zusatz.discard("Senior")
     stufen |= zusatz
+    # Gemischte Ausschreibungen wie "(Senior) Consultant", "Senior-/Consultant" oder
+    # "Consultant / Manager" zählen nur zur höheren Stufe. Unter "Berufseinstieg"
+    # stehen so nur reine Einstiegsstellen (und Praktika, siehe oben).
+    if stufen & {"Senior", "Manager", "Director & Partner"}:
+        stufen.discard("Berufseinstieg")
     return [s for s in STUFEN if s in stufen] or [OHNE_STUFE]
 
 
@@ -1907,7 +1915,7 @@ def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_d
                 if str(alt.get("gesehen", "")) < str(zwilling.get("gesehen", "")):
                     zwilling["gesehen"], zwilling["genau"] = alt["gesehen"], bool(alt.get("genau"))
             else:
-                stellen[sid] = alt
+                stellen[sid] = mit_aktuellen_stufen(alt)
             continue
         vermisst = str(alt.get("vermisst_seit") or jetzt_text)
         if herkunft in ausgefallen:
@@ -1917,8 +1925,15 @@ def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_d
         else:
             behalten = False
         if behalten and passt_noch(alt, cfg):
-            stellen[sid] = {**alt, "vermisst_seit": vermisst}
+            stellen[sid] = {**mit_aktuellen_stufen(alt), "vermisst_seit": vermisst}
     return stellen, neu
+
+
+def mit_aktuellen_stufen(stelle: dict) -> dict:
+    """Behaltene Stellen nach den aktuellen Stufen-Regeln einordnen. Lässt der Titel keine
+    Stufe erkennen, bleibt die bisherige (z. B. aus den Angaben der Karriereseite)."""
+    stufen = bestimme_stufen(stelle.get("titel", ""), stelle.get("arten") or [])
+    return {**stelle, "stufen": stufen} if stufen != [OHNE_STUFE] else dict(stelle)
 
 
 def passt_noch(stelle: dict, cfg: dict) -> bool:

@@ -435,7 +435,7 @@
   const OHNE_STUFE = "Ohne Angabe";
   const STUFEN = ["Berufseinstieg", "Senior", "Manager", "Director & Partner", OHNE_STUFE];
   const STUFEN_HINWEISE = {
-    "Berufseinstieg": "Junior, Consultant, Associate, Assistent, Praktika",
+    "Berufseinstieg": "Junior, Consultant, Associate, Assistent, Trainee",
     "Senior": "Senior Consultant, Senior Associate, Prüfungsleiter",
     "Manager": "Manager, Senior Manager, Teamleitung",
     "Director & Partner": "Director, Head of, Leitung, Partner",
@@ -578,7 +578,7 @@
       weitere,
       bereiche: Array.isArray(roh.bereiche) ? roh.bereiche : [],
       arten: Array.isArray(roh.arten) ? roh.arten : [],
-      stufen: Array.isArray(roh.stufen) && roh.stufen.length ? roh.stufen : [OHNE_STUFE],
+      stufen: Array.isArray(roh.stufen) ? roh.stufen : [OHNE_STUFE],
       regionen: Array.isArray(roh.regionen) ? roh.regionen : [],
       quellen: Array.isArray(roh.quellen) && roh.quellen.length ? roh.quellen : [roh.quelle || "Arbeitsagentur"],
       text: normalisiere(`${roh.titel} ${roh.firma} ${roh.ort} ${weitere.join(" ")} ${roh.plz || ""}`),
