@@ -84,6 +84,23 @@ tage = 30
 
 
 # --------------------------------------------------------------
+#  Arbeitnow: offene Stellenbörse (arbeitnow.com) mit frei
+#  nutzbarer Schnittstelle, ohne Konto. Bringt Stellen kleiner
+#  Firmen, die über JOIN, Personio & Co. ausschreiben – z. B.
+#  M&A-Boutiquen und Beteiligungsgesellschaften. Es gelten
+#  dieselben Regionen, Bereiche und Ausschlüsse.
+# --------------------------------------------------------------
+
+[arbeitnow]
+# Abschalten: aktiv = false
+aktiv = true
+# So viele Seiten mit den neuesten Stellen je Lauf (je etwa 100, höchstens 5)
+seiten = 2
+# So viele Tage bleibt eine Stelle von Arbeitnow im Radar
+tage = 21
+
+
+# --------------------------------------------------------------
 #  Suchbegriffe: Mit jedem Begriff wird in jeder Region gesucht.
 #  Lieber genaue Begriffe als allgemeine, sonst kommen viele
 #  Fehltreffer (z. B. "Sanierung" findet vor allem Bauberufe).

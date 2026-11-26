@@ -1,8 +1,10 @@
 # Stellenradar
 
 Persönliches Jobportal für Stellen in Wirtschaftsprüfung, Interner Revision,
-Transaction Services/FDD, Restrukturierung, M&A, Debt Advisory, Private Equity
-und Unternehmensbewertung.
+Transaction Services/FDD, Restrukturierung, M&A, Debt Advisory, Private Equity,
+Unternehmensbewertung, Investment Banking und Corporate Development.
+
+Version 1.6 (26.11.2026)
 
 **Webseite:** https://leonesw.github.io/jobportal/
 
@@ -11,8 +13,10 @@ und Unternehmensbewertung.
 1. Jede Stunde startet GitHub automatisch den Ablauf „Stellen sammeln“
    (Datei `.github/workflows/stellen-sammeln.yml`).
 2. `sammler.py` fragt die Jobsuche der Bundesagentur für Arbeit und die
-   Karriereseiten der Firmen aus `firmen.toml` ab und liest deine Jobalarme
-   (LinkedIn, StepStone, Indeed) aus einem eigenen Postfach. Es behält nur
+   Karriereseiten der Firmen aus `firmen.toml` ab, liest deine Jobalarme
+   (LinkedIn, StepStone, Indeed) aus einem eigenen Postfach, fragt die offene
+   Stellenbörse Arbeitnow ab und übernimmt deine selbst eingeworfenen Stellen
+   aus `manuell.toml`. Seiten, deren robots.txt das verbietet, liest es nicht. Es behält nur
    passende Stellen in deinen Regionen und speichert sie in `jobs.json`. Steht
    eine Stelle in mehreren Quellen, erscheint sie nur einmal.
 3. Danach wird die Webseite (`index.html` + `jobs.json`) neu veröffentlicht.
@@ -30,6 +34,23 @@ und speichert Links ohne persönliche Tracking-Angaben. Eine Stelle aus einem
 Jobalarm bleibt 30 Tage im Radar (einstellbar in `einstellungen.toml`).
 Die Einrichtung steht in der Anleitung „Stellenradar-Jobalarme.pdf“.
 
+## Stelle einwerfen (z. B. von LinkedIn)
+
+LinkedIn darf nicht automatisch ausgelesen werden. Stellen, die nur dort stehen,
+wirfst du selbst ein: Auf der Webseite „+ Stelle einwerfen“ anklicken (öffnet das
+Formular bei GitHub), Link, Titel, Firma und Ort eintragen, „Create“ klicken. Der
+Ablauf „Stelle einwerfen“ prüft die Angaben, entfernt Tracking-Zusätze aus dem
+Link, trägt die Stelle in `manuell.toml` ein, antwortet im Issue und startet
+„Stellen sammeln“. Nach 3–5 Minuten steht sie mit Bereich, Region und Stufe auf
+der Webseite. Formulare anderer Personen werden nicht verarbeitet. Entfernen:
+Block in `manuell.toml` löschen.
+
+## Warnhinweise auf der Webseite
+
+Meldet eine Quelle beim letzten Lauf einen Fehler (Arbeitsagentur, einzelne
+Karriereseiten, Jobalarme, Arbeitnow, `manuell.toml`), steht oben auf der
+Webseite ein Hinweis mit dem, was zu tun ist.
+
 ## Einstellungen ändern
 
 Suchbegriffe, Regionen, Bereiche und die Ausschlussliste stehen in
@@ -46,4 +67,7 @@ Der nächste stündliche Lauf übernimmt die Änderungen.
 | `sammler.py` | Das Sammel-Programm |
 | `einstellungen.toml` | Suchbegriffe, Regionen, Bereiche, Ausschlüsse |
 | `firmen.toml` | Firmen, deren Karriereseiten direkt abgefragt werden |
+| `manuell.toml` | Selbst eingeworfene Stellen |
 | `.github/workflows/stellen-sammeln.yml` | Die stündliche Automatik |
+| `.github/workflows/stelle-einwerfen.yml` | Übernimmt Stellen aus dem Formular „Stelle einwerfen“ |
+| `.github/ISSUE_TEMPLATE/stelle-formular.yml` | Das Formular „Stelle einwerfen“ |

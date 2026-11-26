@@ -7,7 +7,9 @@ Läuft automatisch jede Stunde über GitHub Actions und
 
   1. fragt die Jobsuche der Bundesagentur für Arbeit ab, und zwar für jeden
      Suchbegriff, jede Region und jede Anstellungsart aus einstellungen.toml,
-  2. fragt die Karriereseiten der Firmen aus firmen.toml ab,
+  2. fragt die Karriereseiten der Firmen aus firmen.toml ab (dazu Jobalarme aus
+     einem eigenen Postfach, die Stellenbörse Arbeitnow und selbst eingeworfene
+     Stellen aus manuell.toml; robots.txt wird beachtet),
   3. behält nur Stellen, die zu deinen Bereichen und Regionen passen,
   4. erkennt aus dem Titel die Karrierestufe (Berufseinstieg, Senior, Manager …),
   5. entfernt Dubletten und merkt sich, wann eine Stelle zum ersten Mal
@@ -35,6 +37,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
+import urllib.robotparser
 import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
@@ -69,7 +72,7 @@ BA_HEADER = {
     "User-Agent": "Stellenradar/1.3 (privates Bewerbungsportal)",
 }
 WEB_HEADER = {
-    "User-Agent": "Mozilla/5.0 (compatible; Stellenradar/1.3; privates Bewerbungsportal)",
+    "User-Agent": "Mozilla/5.0 (compatible; Stellenradar/1.6; privates Bewerbungsportal)",
     "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
 }
 
@@ -398,6 +401,7 @@ def lade_einstellungen() -> dict:
                        key=len, reverse=True)
     firmen_cfg = roh.get("firmen", {})
     alarme_cfg = roh.get("jobalarme", {})
+    arbeitnow_cfg = roh.get("arbeitnow", {})
 
     if not regionen or not begriffe or not bereiche:
         sys.exit("einstellungen.toml braucht mindestens eine Region, einen Suchbegriff und einen Bereich.")
@@ -424,6 +428,11 @@ def lade_einstellungen() -> dict:
         "jobalarme": {
             "server": str(alarme_cfg.get("server", "imap.gmail.com")),
             "tage": max(1, min(90, int(alarme_cfg.get("tage", 30)))),
+        },
+        "arbeitnow": {
+            "aktiv": bool(arbeitnow_cfg.get("aktiv", False)),
+            "seiten": max(1, min(5, int(arbeitnow_cfg.get("seiten", 2)))),
+            "tage": max(1, min(60, int(arbeitnow_cfg.get("tage", 21)))),
         },
     }
 
@@ -1257,7 +1266,156 @@ def quelle_ebnerstolz(firma: dict, heute: date) -> list[dict]:
     return list(gefunden.values())
 
 
+# --- robots.txt: Seiten, die automatische Abrufe verbieten, werden nicht gelesen ---
+
+_ROBOTS: dict[str, urllib.robotparser.RobotFileParser | None] = {}
+ROBOTS_NAME = "Stellenradar"
+
+
+def robots_erlaubt(url: str) -> bool:
+    """Erlaubt die robots.txt der Seite diesen Abruf? Fehlt sie (404) oder ist sie nicht
+    lesbar, gilt der Abruf als erlaubt – wie bei Suchmaschinen üblich."""
+    teile = urllib.parse.urlsplit(url)
+    basis = f"{teile.scheme}://{teile.netloc}"
+    if basis not in _ROBOTS:
+        regeln = None
+        try:
+            text = abrufen(f"{basis}/robots.txt", art="text", versuche=2, kopf={"Accept": "text/plain"})
+            regeln = urllib.robotparser.RobotFileParser()
+            regeln.parse(text.splitlines())
+        except Exception:  # noqa: BLE001 – keine robots.txt: keine Einschränkung
+            regeln = None
+        _ROBOTS[basis] = regeln
+    regeln = _ROBOTS[basis]
+    return regeln is None or regeln.can_fetch(ROBOTS_NAME, url)
+
+
+def pruefe_robots(url: str) -> None:
+    if not robots_erlaubt(url):
+        host = urllib.parse.urlsplit(url).netloc
+        raise PermissionError(f"robots.txt von {host} erlaubt diesen Abruf nicht – Firma in firmen.toml abschalten")
+
+
+# "Frankfurt am Main, Germany (hybrid)" → "Frankfurt am Main"
+_ARBEITSMODELL = re.compile(r"\s*\((?:hybrid|remote|on-?site|vor ort|fully remote|teilweise remote)\)\s*", re.I)
+
+
+def quelle_join(firma: dict, heute: date) -> list[dict]:
+    """Firmenseite bei JOIN (join.com/companies/<konto>): Stellen als Links mit Titel,
+    Ort, Anstellungsart ("Employee", "Internship" …) und Abteilung."""
+    konto = firma["konto"]
+    basis = f"https://join.com/companies/{konto}"
+    pruefe_robots(basis)
+    link_muster = re.compile(rf"^(?:https?://(?:www\.)?join\.com)?/companies/{re.escape(konto)}/(?:jobs/)?(\d+)(?:-[^?#]*)?",
+                             re.I)
+    gefunden: dict[str, dict] = {}
+    for nummer in range(1, 6):  # große Firmen verteilen ihre Stellen auf mehrere Seiten
+        seite = abrufen(basis + (f"?page={nummer}" if nummer > 1 else ""), art="text",
+                        kopf={"Accept": "text/html"})
+        roh = seite.replace('\\"', '"')
+        vorher = len(gefunden)
+        for a in _knoten(_baum(seite), "a"):
+            m = link_muster.match(html.unescape(a["attrs"].get("href", "")).strip())
+            if not m or m.group(1) in gefunden:
+                continue
+            teile = _textteile(a)
+            if len(teile) < 2 and a["eltern"] is not None:  # Angaben neben dem Link statt darin
+                teile = _textteile(a["eltern"])
+            if not teile:
+                continue
+            titel, rest = teile[0], teile[1:]
+            ort = next((t for t in rest if re.search(r",\s*(?:germany|deutschland)\b|\((?:hybrid|remote)\)", t, re.I)), "")
+            typ = next((t for t in rest if re.fullmatch(
+                r"(?:employee|full-?time|part-?time|internship|intern|working student|werkstudent\w*|praktikum|"
+                r"trainee|apprenticeship|ausbildung|freelance\w*|mini-?job|festanstellung|vollzeit|teilzeit)",
+                t.strip(), re.I)), "")
+            orte = [_ARBEITSMODELL.sub(" ", ort).strip(" ,")] if ort else []
+            if ort and not orte[0]:  # nur "(remote)"
+                orte = ["Remote"]
+            # Datum aus den eingebetteten Seitendaten, falls vorhanden
+            datum = None
+            for treffer in re.finditer(rf'"{m.group(1)}[-"]', roh):
+                fenster = roh[max(0, treffer.start() - 1200): treffer.end() + 1200]
+                d = re.search(r'"(?:createdAt|publishedAt|activatedAt|startDate)"\s*:\s*"(\d{4}-\d{2}-\d{2})', fenster)
+                if d:
+                    datum = als_datum(d.group(1))
+                    break
+            gefunden[m.group(1)] = {
+                "id": m.group(1),
+                "titel": titel,
+                "firma": firma["name"],
+                "orte": orte,
+                "datum": datum,
+                "link": f"https://join.com/companies/{konto}/{m.group(0).rsplit('/', 1)[-1]}",
+                "hinweise": [t for t in rest if t not in (ort, typ)][:3],
+                "arten": arten_aus_text(typ),
+                "stufe": None,
+            }
+        if len(gefunden) == vorher or f"page={nummer + 1}" not in seite:
+            break
+        time.sleep(PAUSE_SEKUNDEN)
+    return list(gefunden.values())
+
+
+def _csb_feld(zeile: str, klasse: str) -> str:
+    m = re.search(rf'<span[^>]*class="[^"]*\b{klasse}\b[^"]*"[^>]*>(.*?)</span>', zeile, re.S)
+    return ohne_tags(m.group(1)) if m else ""
+
+
+def quelle_csb(firma: dict, heute: date) -> list[dict]:
+    """Stellensuche von SAP SuccessFactors Career Site Builder (z. B. careers.ey.com,
+    jobs.deloitte.de): Ergebnisseite als Tabelle, 25 Stellen je Seite, je Ort eine Suche."""
+    basis = firma["basis"].rstrip("/")
+    wurzel = re.match(r"https?://[^/]+", basis).group(0)
+    gefunden: dict[str, dict] = {}
+    for ort in firma.get("suche") or [""]:
+        start, gesamt = 0, None
+        while start < 25 * firma.get("max_seiten", 40):
+            parameter = {"q": "", "locationsearch": ort, "startrow": start,
+                         "sortColumn": "referencedate", "sortDirection": "desc"}
+            url = f"{basis}/search/?{urllib.parse.urlencode(parameter)}"
+            if start == 0:
+                pruefe_robots(url)
+            seite = abrufen(url, art="text", kopf={"Accept": "text/html"})
+            if gesamt is None:
+                g = re.search(r'paginationLabel.*?(?:von|of)\s*(?:<b>)?\s*([\d.,]+)', seite, re.S | re.I)
+                gesamt = als_zahl(re.sub(r"[.,]", "", g.group(1)), 0) if g else 0
+            zeilen = 0
+            for zeile in re.split(r'<tr[^>]*class="[^"]*\bdata-row\b', seite)[1:]:
+                zeile = zeile.split("</tr>", 1)[0]
+                a = next((x for x in re.finditer(r"<a\b([^>]*)>(.*?)</a>", zeile, re.S) if "jobTitle-link" in x.group(1)), None)
+                href = a and re.search(r'href="([^"]+)"', a.group(1))
+                if not href:
+                    continue
+                link = urllib.parse.urljoin(wurzel + "/", html.unescape(href.group(1)))
+                nummer = re.search(r"/(\d{5,})/?(?:\?|$)", link)
+                schluessel = nummer.group(1) if nummer else link
+                zeilen += 1
+                if schluessel in gefunden:  # schon über einen anderen Ort gefunden
+                    continue
+                ort_text = re.sub(r",\s*(?:[A-Z]{2}\b|\d{5})", "", _csb_feld(zeile, "jobLocation")).strip(" ,")
+                datum_roh = _csb_feld(zeile, "jobDate")
+                gefunden[schluessel] = {
+                    "id": schluessel,
+                    "titel": ohne_tags(a.group(2)),
+                    "firma": firma["name"],
+                    "orte": [ort_text] if ort_text else [],
+                    "datum": als_datum(datum_roh) or datum_text(datum_roh),
+                    "link": link.split("?", 1)[0],
+                    "hinweise": [x for x in (_csb_feld(zeile, "jobDepartment"), _csb_feld(zeile, "jobFacility")) if x],
+                    "arten": arten_aus_text(_csb_feld(zeile, "jobShifttype")),
+                    "stufe": None,
+                }
+            start += 25
+            time.sleep(PAUSE_SEKUNDEN)
+            if not zeilen or (gesamt and start >= gesamt):
+                break
+    return list(gefunden.values())
+
+
 QUELLEN = {
+    "join": quelle_join,
+    "csb": quelle_csb,
     "personio": quelle_personio,
     "recruitee": quelle_recruitee,
     "greenhouse": quelle_greenhouse,
@@ -1775,6 +1933,277 @@ def verbinde_jobalarme(mail_stellen: list[dict], ba_stellen: dict, firmen_stelle
     return eigene, doppelt
 
 
+# --- Arbeitnow: offene Stellenbörse mit frei nutzbarer Schnittstelle --------------
+#
+# arbeitnow.com sammelt Stellen kleinerer Firmen aus deren Bewerbersystemen (JOIN,
+# Personio, Recruitee …), darunter M&A-Boutiquen und Beteiligungsgesellschaften.
+# Die Schnittstelle liefert nur die neuesten Stellen; ältere fallen aus der Liste,
+# obwohl sie noch offen sind. Deshalb bleibt eine Stelle `tage` Tage im Radar.
+
+QUELLE_ARBEITNOW = "Arbeitnow"
+ARBEITNOW_API = "https://www.arbeitnow.com/api/job-board-api"
+
+
+def lies_arbeitnow(cfg: dict, heute: date) -> tuple[list[dict], dict]:
+    einst = cfg["arbeitnow"]
+    if not einst["aktiv"]:
+        return [], {"status": "aus"}
+    pruefe_robots(ARBEITNOW_API)
+    roh, seiten = [], 0
+    for nummer in range(1, einst["seiten"] + 1):
+        antwort = abrufen(f"{ARBEITNOW_API}?page={nummer}")
+        liste = antwort.get("data") or []
+        seiten += 1
+        for j in liste:
+            link = str(j.get("url") or "").split("?", 1)[0]
+            if not link.startswith("https://"):
+                continue
+            zeit = j.get("created_at")
+            datum = (datetime.fromtimestamp(zeit, tz=BERLIN).date() if isinstance(zeit, (int, float))
+                     else als_datum(zeit))
+            ort = str(j.get("location") or "").strip()
+            roh.append({
+                "id": str(j.get("slug") or link),
+                "titel": str(j.get("title") or ""),
+                "firma": str(j.get("company_name") or ""),
+                "orte": [ort] if ort else (["Remote"] if j.get("remote") else []),
+                "datum": datum,
+                "link": link,
+                "hinweise": [", ".join(str(t) for t in j.get("tags") or [])],
+                "arten": arten_aus_text(" ".join(str(t) for t in j.get("job_types") or [])),
+                "stufe": None,
+            })
+        if not liste or not (antwort.get("links") or {}).get("next"):
+            break
+        time.sleep(1)
+    return roh, {"status": "ok", "seiten": seiten, "gelesen": len(roh)}
+
+
+def baue_arbeitnow_stellen(roh: list[dict], cfg: dict, bericht: dict) -> list[dict]:
+    zaehler: Counter = Counter()
+    proben = {"ausserhalb": Counter(), "ausgeschlossen": [], "kein_bereich": []}
+    stellen, gesehen = [], set()
+    for e in roh:
+        if e["id"] in gesehen:
+            continue
+        gesehen.add(e["id"])
+        if cfg["ohne_pav"] and _VERMITTLER.search(e["firma"] or ""):
+            zaehler["vermittler"] += 1
+            continue
+        firma = {"name": e["firma"] or "Arbeitgeber unbekannt"}
+        stelle = baue_firmenstelle(e, firma, cfg, zaehler, proben, quelle=QUELLE_ARBEITNOW,
+                                   herkunft="arbeitnow", praefix="an-")
+        if stelle:
+            stellen.append(stelle)
+    bericht.update(im_radar=zaehler["im_radar"], vermittler=zaehler["vermittler"],
+                   beispiele_kein_bereich=sorted(set(proben["kein_bereich"]))[:10])
+    return stellen
+
+
+# --- Selbst eingeworfene Stellen (manuell.toml) ------------------------------------
+#
+# Stellen, die nur auf LinkedIn o. Ä. stehen, kannst du selbst einwerfen: über das
+# Formular "Stelle einwerfen" bei GitHub (Reiter Issues) oder direkt in manuell.toml.
+# Das Radar ruft diese Links NICHT ab (LinkedIn verbietet automatische Abrufe); es
+# nimmt Titel, Firma und Ort so, wie du sie eingetragen hast, und ordnet sie ein.
+
+QUELLE_MANUELL = "Eingeworfen"
+MANUELL_DATEI = ORDNER / "manuell.toml"
+ALLE_ARTEN = ["Vollzeit", "Teilzeit", "Werkstudent", "Praktikum", "Trainee", "Abschlussarbeit"]
+# Parameter, mit denen Seiten Klicks verfolgen – sie kommen nicht in die öffentliche jobs.json
+_TRACKING = re.compile(
+    r"^(?:utm_\w+|trk\w*|tracking\w*|refid|ebp|gclid|fbclid|msclkid|mc_cid|mc_eid|lipi|midtoken|midsig|"
+    r"otptoken|recommendedflavor|originalsubdomain|li_fat_id|_hsenc|_hsmi|stepstone_\w+|cmp|sc_cmp)$", re.I)
+
+
+def saubere_adresse(url: str) -> str | None:
+    """Link ohne Tracking-Parameter; Anzeigen von LinkedIn, StepStone und Indeed in Kurzform."""
+    url = html.unescape(str(url or "")).strip()
+    teile = urllib.parse.urlsplit(url)
+    if teile.scheme not in ("http", "https") or not teile.netloc or re.search(r"\s", url):
+        return None
+    for quelle in ("LinkedIn", "StepStone", "Indeed"):
+        kurz = _jobschluessel(quelle, url)
+        if kurz:
+            return kurz[1]
+    m = re.search(r"linkedin\.com/.*[?&]currentJobId=(\d{6,})", url)
+    if m:
+        return f"https://www.linkedin.com/jobs/view/{m.group(1)}/"
+    abfrage = [(k, v) for k, v in urllib.parse.parse_qsl(teile.query, keep_blank_values=True) if not _TRACKING.match(k)]
+    return urllib.parse.urlunsplit((teile.scheme, teile.netloc.lower(), teile.path or "/",
+                                    urllib.parse.urlencode(abfrage), ""))
+
+
+def baue_manuelle_stelle(e: dict, cfg: dict, heute: date) -> tuple[dict | None, str | None]:
+    """Eingeworfene Stelle einordnen. Liefert (Stelle, None), (None, Grund) oder (None, None),
+    wenn die Stelle abgelaufen ist. Die Ausschlussliste gilt hier nicht – du hast sie ja ausgewählt."""
+    link = saubere_adresse(e.get("link"))
+    titel = bereinige_titel(str(e.get("titel") or ""))
+    if not link:
+        return None, "Link fehlt oder ist keine gültige Adresse"
+    if not titel:
+        return None, "Stellentitel fehlt"
+    datum, erfasst, bis = als_datum(e.get("datum")), als_datum(e.get("erfasst")), als_datum(e.get("bis"))
+    bezug = datum or erfasst
+    if (bis and bis < heute) or (not bis and bezug and bezug < heute - timedelta(days=cfg["max_alter"])):
+        return None, None
+
+    ort = str(e.get("ort") or "").strip()
+    regionen, ort_anzeige_text, weitere = ordne_regionen([ort] if ort else [], cfg)
+    alle_regionen = [r["name"] for r in cfg["regionen"]] + [cfg["remote_region"]]
+    if str(e.get("region") or "").strip() in alle_regionen:
+        regionen = [str(e["region"]).strip()]
+    if not regionen:
+        return None, f"Ort „{ort or 'fehlt'}“ liegt in keiner deiner Regionen – bitte die Region auswählen"
+
+    titel_norm = normalisiere(titel)
+    bekannte = [name for name, _ in cfg["bereiche"]]
+    wahl = str(e.get("bereich") or "").strip()
+    bereiche = [wahl] if wahl in bekannte else finde_bereiche(titel_norm, cfg["bereiche"])
+    if not bereiche:
+        return None, "Kein Bereich im Titel erkennbar – bitte den Bereich auswählen"
+
+    art = str(e.get("art") or "").strip()
+    arten = [art] if art in ALLE_ARTEN else bestimme_arten(set(), titel_norm)
+    firma = str(e.get("firma") or "").strip() or "Arbeitgeber unbekannt"
+    stelle = {
+        "id": kurz_id(f"manuell|{link}", "mx-"),
+        "titel": titel,
+        "firma": firma,
+        "ort": ort_anzeige_text or ort,
+        "plz": "",
+        "regionen": regionen,
+        "bereiche": bereiche,
+        "arten": arten,
+        "stufen": bestimme_stufen(titel, arten),
+        "veroeffentlicht": bezug.isoformat() if bezug else None,
+        "link": link,
+        "quelle": QUELLE_MANUELL,
+        "quellen": [QUELLE_MANUELL],
+        "herkunft": "manuell",
+        "_kern": firmenkern(firma),
+    }
+    if weitere:
+        stelle["weitere_orte"] = weitere
+    return stelle, None
+
+
+def lies_manuell(cfg: dict, heute: date) -> tuple[list[dict], dict]:
+    if not MANUELL_DATEI.exists():
+        return [], {"status": "keine", "eintraege": 0}
+    with MANUELL_DATEI.open("rb") as f:
+        eintraege = [x for x in tomllib.load(f).get("stelle", []) if isinstance(x, dict)]
+    stellen, probleme, gesehen = [], [], set()
+    for nummer, e in enumerate(eintraege, 1):
+        stelle, grund = baue_manuelle_stelle(e, cfg, heute)
+        if stelle and stelle["id"] not in gesehen:
+            gesehen.add(stelle["id"])
+            stellen.append(stelle)
+        elif grund:
+            probleme.append(f"Eintrag {nummer} ({str(e.get('titel') or 'ohne Titel')[:60]}): {grund}")
+    return stellen, {"status": "ok", "eintraege": len(eintraege), "im_radar": len(stellen), "probleme": probleme[:20]}
+
+
+# --- Einwerfen über das Formular bei GitHub (Issue) ---------------------------------
+
+_FORMULARFELDER = [
+    ("link", r"link"), ("titel", r"(?:stellen)?titel"), ("firma", r"firma|arbeitgeber"), ("ort", r"ort"),
+    ("art", r"anstellungsart|art"), ("bereich", r"bereich"), ("region", r"region"), ("datum", r"datum|ver[öo]ffentlicht"),
+]
+
+
+def lies_formular(text: str) -> dict:
+    """Antworten eines GitHub-Issue-Formulars ("### Feld" und darunter der Wert)."""
+    werte = {}
+    teile = re.split(r"^#{3}\s+(.+?)\s*$", (text or "").replace("\r\n", "\n"), flags=re.M)
+    for kopf, wert in zip(teile[1::2], teile[2::2]):
+        wert = re.sub(r"\s+", " ", wert).strip()
+        if wert in ("_No response_", "_Keine Antwort_", "automatisch erkennen", "None"):
+            wert = ""
+        k = normalisiere(kopf)
+        for feld, muster in _FORMULARFELDER:
+            if feld not in werte and re.match(rf"(?:{muster})\b", k):
+                werte[feld] = wert
+                break
+    return werte
+
+
+def _toml_text(wert: str) -> str:
+    return json.dumps(wert, ensure_ascii=False)  # JSON-Zeichenketten sind gültiges TOML
+
+
+def einwerfen() -> None:
+    """Wird vom Ablauf "Stelle einwerfen" aufgerufen: Formular aus ISSUE_BODY lesen, prüfen,
+    an manuell.toml anhängen. Die Antwort für das Issue landet in der Datei EINWURF_ANTWORT."""
+    cfg = lade_einstellungen()
+    heute = datetime.now(timezone.utc).astimezone(BERLIN).date()
+    werte = lies_formular(os.environ.get("ISSUE_BODY", ""))
+    eintrag = {k: v[:2000] if k == "link" else v[:200] for k, v in werte.items() if v}
+    eintrag["link"] = saubere_adresse(eintrag.get("link")) or ""
+    if eintrag.get("datum"):
+        datum = als_datum(eintrag["datum"])
+        eintrag.pop("datum")
+        if datum and datum <= heute:
+            eintrag["datum"] = datum
+    eintrag["erfasst"] = heute
+
+    vorhanden = []
+    if MANUELL_DATEI.exists():
+        with MANUELL_DATEI.open("rb") as f:
+            vorhanden = tomllib.load(f).get("stelle", [])
+    stelle, grund = baue_manuelle_stelle(eintrag, cfg, heute)
+    if any(saubere_adresse(x.get("link")) == eintrag["link"] for x in vorhanden if eintrag["link"]):
+        ergebnis, antwort = "doppelt", "Diese Stelle steht schon in manuell.toml – nichts geändert."
+    elif not stelle:
+        ergebnis = "abgelehnt"
+        antwort = (f"Nicht aufgenommen: {grund or 'Die Anzeige ist zu alt.'}\n\n"
+                   "Wirf die Stelle bitte noch einmal ein und fülle das Feld aus.")
+    else:
+        zeilen = ["", "[[stelle]]"]
+        for feld in ("link", "titel", "firma", "ort", "art", "bereich", "region"):
+            if eintrag.get(feld):
+                zeilen.append(f"{feld} = {_toml_text(eintrag[feld])}")
+        for feld in ("datum", "erfasst"):
+            if eintrag.get(feld):
+                zeilen.append(f"{feld} = {eintrag[feld].isoformat()}")
+        alt = MANUELL_DATEI.read_text(encoding="utf-8") if MANUELL_DATEI.exists() else MANUELL_KOPF
+        MANUELL_DATEI.write_text(alt.rstrip("\n") + "\n" + "\n".join(zeilen) + "\n", encoding="utf-8")
+        with MANUELL_DATEI.open("rb") as f:  # Probe: Datei muss lesbar bleiben
+            tomllib.load(f)
+        ergebnis = "ok"
+        antwort = (f"Aufgenommen: **{stelle['titel']}** bei {stelle['firma']}\n\n"
+                   f"- Region: {', '.join(stelle['regionen'])}\n- Bereich: {', '.join(stelle['bereiche'])}\n"
+                   f"- Anstellungsart: {', '.join(stelle['arten'])}\n\n"
+                   "Sie erscheint nach dem nächsten Lauf von „Stellen sammeln“ (wird gleich gestartet) "
+                   f"und bleibt {cfg['max_alter']} Tage im Radar. Entfernen: den Eintrag in manuell.toml löschen.")
+    ziel = os.environ.get("EINWURF_ANTWORT")
+    if ziel:
+        Path(ziel).write_text(antwort + "\n", encoding="utf-8")
+    ausgabe = os.environ.get("GITHUB_OUTPUT")
+    if ausgabe:
+        with open(ausgabe, "a", encoding="utf-8") as f:
+            f.write(f"ergebnis={ergebnis}\n")
+    print(antwort)
+
+
+MANUELL_KOPF = """# ==============================================================
+#  Stellenradar – selbst eingeworfene Stellen
+#
+#  Stellen, die das Radar nicht selbst findet (z. B. nur auf
+#  LinkedIn), trägst du hier ein – am einfachsten über das
+#  Formular "Stelle einwerfen" (Webseite → "Stelle einwerfen").
+#  Das Radar ruft diese Links nicht ab; es übernimmt Titel,
+#  Firma und Ort und ordnet sie wie alle Stellen ein.
+#
+#  Pflicht: link, titel. Sinnvoll: firma, ort.
+#  Optional: art (Vollzeit, Praktikum, Werkstudent …), bereich,
+#  region, datum (Tag der Anzeige), bis (ab dann ausblenden).
+#  Ohne "bis" bleibt eine Stelle so lange wie max_alter_tage.
+#  Entfernen: den ganzen Block löschen.
+# ==============================================================
+"""
+
+
 # --- Zusammenführen und Speichern ------------------------------------------------
 
 
@@ -1821,13 +2250,14 @@ def verbinde_dubletten(ba_stellen: dict, firmen_stellen: list[dict], cfg: dict) 
 
 
 def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_dabei, jetzt, heute, cfg,
-                    erfolgreich=frozenset(), mail_grenze=None):
+                    erfolgreich=frozenset(), mail_grenze=None, arbeitnow_grenze=None):
     """Neue Stellen mit dem letzten Stand verbinden; liefert (stellen, anzahl_neu).
 
     neu_dabei: Quellen, die zum ersten Mal erfolgreich abgefragt wurden. Ihre Stellen
     gelten nicht als "gerade eben entdeckt", sondern erscheinen mit ihrem Datum.
     erfolgreich: Quellen, die in diesem Lauf erreichbar waren (für die Nachfrist).
     mail_grenze: Stellen aus Jobalarmen vom diesem Tag an bleiben im Radar (None: Jobalarme aus).
+    arbeitnow_grenze: dasselbe für Stellen von Arbeitnow (None: Arbeitnow aus).
     """
     stellen, neu = {}, 0
     # Stand früher bei Arbeitsagentur UND Karriereseite, ist die Anzeige bei der
@@ -1895,17 +2325,19 @@ def fuehre_zusammen(ba_stellen, firmen_stellen, alte_stellen, ausgefallen, neu_d
     uebernommen = {i for s in stellen.values() for i in s.get("alt", [])}
     frisch_index: dict[str, list[dict]] = {}
     for s in stellen.values():
-        if not str(s.get("herkunft", "ba")).startswith("mail:"):
+        if not str(s.get("herkunft", "ba")).startswith("mail:") and s.get("herkunft") != "arbeitnow":
             frisch_index.setdefault(titel_schluessel(s["titel"], cfg), []).append(s)
     for sid, alt in alte_stellen.items():
         if sid in stellen or sid in uebernommen:
             continue
         herkunft = alt.get("herkunft", "ba")
-        if herkunft.startswith("mail:"):
+        if herkunft.startswith("mail:") or herkunft == "arbeitnow":
             # Stellen aus Jobalarmen bleiben bis zu `tage` Tage nach dem Alarm, auch wenn die Mail
-            # nicht mehr gelesen wird. Steht die Stelle inzwischen bei der Arbeitsagentur oder auf
-            # einer Karriereseite, geht sie in dieser Anzeige auf (Datum und Merkliste bleiben).
-            if mail_grenze is None or str(alt.get("gesehen", ""))[:10] < mail_grenze or not passt_noch(alt, cfg):
+            # nicht mehr gelesen wird (Arbeitnow ebenso: dort fallen ältere Stellen aus der Liste).
+            # Steht die Stelle inzwischen bei der Arbeitsagentur oder auf einer Karriereseite,
+            # geht sie in dieser Anzeige auf (Datum und Merkliste bleiben).
+            grenze = arbeitnow_grenze if herkunft == "arbeitnow" else mail_grenze
+            if grenze is None or str(alt.get("gesehen", ""))[:10] < grenze or not passt_noch(alt, cfg):
                 continue
             zwilling = next((s for s in frisch_index.get(titel_schluessel(alt.get("titel", ""), cfg), [])
                              if set(s.get("regionen", [])) & set(alt.get("regionen", []))
@@ -2043,7 +2475,29 @@ def main() -> None:
     mail_grenze = (None if mail_bericht["status"] == "nicht eingerichtet"
                    else (heute - timedelta(days=cfg["jobalarme"]["tage"])).isoformat())
 
-    # 3. Zusammenführen. Quellen, die zum ersten Mal dabei sind, bringen keine "neuen" Stellen.
+    # 4. Arbeitnow (offene Stellenbörse) und selbst eingeworfene Stellen
+    alte_arbeitnow = alte_quellen.get(QUELLE_ARBEITNOW) or {}
+    try:
+        an_roh, an_bericht = lies_arbeitnow(cfg, heute)
+        an_stellen = baue_arbeitnow_stellen(an_roh, cfg, an_bericht) if an_roh else []
+        an_stellen, an_doppelt = verbinde_jobalarme(an_stellen, ba_stellen, firmen_stellen + mail_stellen, cfg)
+        an_bericht["doppelt"] = an_doppelt
+    except Exception as fehler:  # noqa: BLE001
+        an_stellen, an_bericht = [], {"status": "fehler", "fehler": str(fehler)[:200]}
+        firmen_protokoll.append(f"Arbeitnow: {an_bericht['fehler']}")
+    arbeitnow_grenze = (None if an_bericht["status"] == "aus"
+                        else (heute - timedelta(days=cfg["arbeitnow"]["tage"])).isoformat())
+    try:
+        manuell_stellen, manuell_bericht = lies_manuell(cfg, heute)
+        manuell_stellen, manuell_bericht["doppelt"] = verbinde_jobalarme(
+            manuell_stellen, ba_stellen, firmen_stellen + mail_stellen + an_stellen, cfg)
+    except Exception as fehler:  # noqa: BLE001 – z. B. Tippfehler in manuell.toml
+        manuell_stellen = []
+        manuell_bericht = {"status": "fehler", "fehler": f"manuell.toml nicht lesbar: {str(fehler)[:160]}"}
+        ausgefallen.add("manuell")  # bisherige eingeworfene Stellen bleiben sichtbar
+        firmen_protokoll.append(manuell_bericht["fehler"])
+
+    # 5. Zusammenführen. Quellen, die zum ersten Mal dabei sind, bringen keine "neuen" Stellen.
     alte_firmen = alte_quellen.get(QUELLE_FIRMA + "n") or {}
     bekannt = set(alte_firmen.get("bekannt") or [])
     if alte_stellen or (alte_quellen.get(QUELLE_BA) or {}).get("letzter_erfolg"):
@@ -2053,10 +2507,15 @@ def main() -> None:
         erfolgreich.add("ba")
     if mail_bericht["status"] == "ok":
         erfolgreich |= mail_herkuenfte
+    if an_bericht["status"] == "ok":
+        erfolgreich.add("arbeitnow")
+    if alte_arbeitnow.get("letzter_erfolg"):
+        bekannt.add("arbeitnow")
     bekannt_mail = set(alte_alarme.get("bekannt") or [])
     neu_dabei = erfolgreich - bekannt - bekannt_mail
-    stellen, neu = fuehre_zusammen(ba_stellen, firmen_stellen + mail_stellen, alte_stellen, ausgefallen, neu_dabei,
-                                   jetzt, heute, cfg, erfolgreich - ausgefallen, mail_grenze)
+    stellen, neu = fuehre_zusammen(ba_stellen, firmen_stellen + mail_stellen + an_stellen + manuell_stellen,
+                                   alte_stellen, ausgefallen, neu_dabei, jetzt, heute, cfg,
+                                   erfolgreich - ausgefallen, mail_grenze, arbeitnow_grenze)
     # Davon von Firmen, die gerade erst in firmen.toml aufgenommen wurden
     neu_von_neuen_firmen = sum(1 for sid, s in stellen.items()
                                if s.get("herkunft", "ba") != "ba" and s["herkunft"] in neu_dabei
@@ -2080,6 +2539,8 @@ def main() -> None:
         "firmen": firmen_bericht,
         "nachfrist": sorted(f"{s.get('firma', '')}: {s.get('titel', '')}" for s in in_nachfrist)[:40],
         "jobalarme": {k: v for k, v in mail_bericht.items() if k != "status"},
+        "arbeitnow": {k: v for k, v in an_bericht.items() if k != "status"},
+        "eingeworfen": {k: v for k, v in manuell_bericht.items() if k != "status"},
     })
 
     regionen_liste = [r["name"] for r in cfg["regionen"]]
@@ -2100,7 +2561,7 @@ def main() -> None:
                 "firmen": len(firmen_bericht),
                 "fehlgeschlagen": firmen_fehler,
                 "letzter_erfolg": zeitstempel if firmen_status in ("ok", "teilweise") else alte_firmen.get("letzter_erfolg"),
-                "bekannt": sorted((bekannt | erfolgreich) - {"ba"} - mail_herkuenfte),
+                "bekannt": sorted((bekannt | erfolgreich) - {"ba", "arbeitnow"} - mail_herkuenfte),
             },
             QUELLE_MAIL: {
                 "status": mail_bericht["status"],
@@ -2108,6 +2569,16 @@ def main() -> None:
                 "tage": cfg["jobalarme"]["tage"],
                 "letzter_erfolg": zeitstempel if mail_bericht["status"] == "ok" else alte_alarme.get("letzter_erfolg"),
                 "bekannt": sorted(bekannt_mail | (erfolgreich & mail_herkuenfte)),
+            },
+            QUELLE_ARBEITNOW: {
+                "status": an_bericht["status"],
+                "tage": cfg["arbeitnow"]["tage"],
+                "letzter_erfolg": zeitstempel if an_bericht["status"] == "ok" else alte_arbeitnow.get("letzter_erfolg"),
+            },
+            QUELLE_MANUELL: {
+                "status": manuell_bericht["status"],
+                "eintraege": manuell_bericht.get("eintraege", 0),
+                "probleme": len(manuell_bericht.get("probleme") or []),
             },
         },
         "bereiche": [name for name, _ in cfg["bereiche"]],
@@ -2141,6 +2612,23 @@ def main() -> None:
                        + (f", Mails ohne erkennbare Stellen: {mail_bericht['mails_ohne_stellen']}"
                           if mail_bericht.get("mails_ohne_stellen") else "")
                        + f", Dauer {dauer_mail:.0f} s")
+    aus_arbeitnow = sum(1 for s in stellen.values() if s.get("herkunft") == "arbeitnow")
+    if an_bericht["status"] == "aus":
+        arbeitnow_zeile = "- Arbeitnow: abgeschaltet (einstellungen.toml)"
+    elif an_bericht["status"] == "fehler":
+        arbeitnow_zeile = "- Arbeitnow: **fehler** – " + an_bericht.get("fehler", "")
+    else:
+        arbeitnow_zeile = (f"- Arbeitnow: **ok** – {an_bericht.get('gelesen', 0)} neueste Stellen gelesen, "
+                           f"davon passend: {an_bericht.get('im_radar', 0)} (schon aus anderer Quelle: "
+                           f"{an_bericht.get('doppelt', 0)}), Stellen von Arbeitnow im Radar: {aus_arbeitnow}")
+    if manuell_bericht["status"] == "fehler":
+        manuell_zeile = "- Eingeworfen: **fehler** – " + manuell_bericht["fehler"]
+    else:
+        manuell_zeile = (f"- Eingeworfen: {manuell_bericht.get('eintraege', 0)} Einträge in manuell.toml, "
+                         f"{manuell_bericht.get('im_radar', 0)} im Radar"
+                         + (f" ({manuell_bericht['doppelt']} davon stehen schon in einer anderen Quelle)"
+                            if manuell_bericht.get("doppelt") else "")
+                         + "".join(f"\n  - {x}" for x in manuell_bericht.get("probleme") or []))
     zeilen = [
         f"## Stellenradar – Lauf vom {jetzt.astimezone(BERLIN):%d.%m.%Y, %H:%M} Uhr",
         "",
@@ -2149,6 +2637,8 @@ def main() -> None:
         f"- Karriereseiten: **{firmen_status}** – {len(firmen_bericht)} Firmen, {firmen_fehler} nicht erreichbar, "
         f"{aus_firmen} Stellen im Radar (davon {doppelt} auch bei der Arbeitsagentur), Dauer {dauer_firmen:.0f} s",
         alarm_zeile,
+        arbeitnow_zeile,
+        manuell_zeile,
         f"- Stellen im Radar: **{len(stellen)}**, davon neu in diesem Lauf: **{neu}**"
         + (f" ({neu_von_neuen_firmen} davon von neu aufgenommenen Firmen)" if neu_von_neuen_firmen else "")
         + (f" ({neu_aus_ersten_alarmen} davon aus dem ersten Abruf der Jobalarme)" if neu_aus_ersten_alarmen else "")
@@ -2188,4 +2678,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if "--einwerfen" in sys.argv[1:]:
+        einwerfen()
+    else:
+        main()

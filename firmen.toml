@@ -21,6 +21,13 @@
 #    oracle     host, seite (Oracle Recruiting Cloud, z. B. Kroll)
 #    talemetry  basis, suche (Stellensuche als Webseite)
 #    ebnerstolz standorte, fachbereiche (nur für Ebner Stolz)
+#    join       konto = Teil nach "join.com/companies/"
+#    csb        basis, suche (Stellensuche von SuccessFactors
+#               "Career Site Builder", z. B. EY und Deloitte)
+#
+#  Steht eine Firma auf keiner abrufbaren Seite (z. B. nur auf
+#  LinkedIn), wirf ihre Stellen selbst ein: Webseite → "Stelle
+#  einwerfen" (landet in manuell.toml).
 #
 #  "bereiche" (optional) gilt nur, wenn der Stellentitel selbst
 #  keinen Bereich erkennen lässt – für Boutiquen mit Titeln wie
@@ -57,6 +64,22 @@ aliase = ["KPMG AG Wirtschaftsprüfungsgesellschaft"]
 system = "successfactors"
 feed = "https://jobs.kpmg.de/feed/289301"
 ohne_marken = ["kpmgLAW"]
+
+# Stellensuche careers.ey.com (Career Site Builder), je Standort eine Suche.
+# Enthält auch EY-Parthenon und Strategy and Transactions.
+[[firma]]
+name = "EY"
+aliase = ["Ernst & Young", "EY-Parthenon", "EY Parthenon"]
+system = "csb"
+basis = "https://careers.ey.com/ey"
+suche = ["Eschborn", "Frankfurt", "Mannheim"]
+
+# Stellensuche jobs.deloitte.de (Career Site Builder)
+[[firma]]
+name = "Deloitte"
+system = "csb"
+basis = "https://jobs.deloitte.de"
+suche = ["Frankfurt", "Mannheim"]
 
 [[firma]]
 name = "Grant Thornton"
@@ -157,7 +180,7 @@ konto = "bw-partner-partnerschaft-mbb"
 
 # Alvarez & Marsal sperrt automatische Abrufe von den GitHub-Servern
 # (Fehler 403 seit dem 18.10.2026), deshalb abgeschaltet. A&M-Stellen
-# lassen sich über LinkedIn-Jobalarme ins Radar holen.
+# kommen über LinkedIn-Jobalarme oder "Stelle einwerfen" ins Radar.
 # [[firma]]
 # name = "Alvarez & Marsal"
 # system = "talemetry"
@@ -175,8 +198,12 @@ name = "AlixPartners"
 system = "greenhouse"
 konto = "alixpartners"
 
-# FTI Consulting: Die Stellenplattform zeigt derzeit keine Stellen.
-# BDO: keine offene Stellenliste (nur interne Suche mit Zugangsschlüssel).
+# Nicht automatisch abrufbar (Stand 26.11.2026) – Stellen dieser Firmen
+# kommen über die Arbeitsagentur, Jobalarme oder "Stelle einwerfen":
+# - FTI Consulting: Stellenplattform (SelectMinds) ohne lesbare Stellenliste
+# - BDO: keine offene Stellenliste (nur interne Suche mit Zugangsschlüssel)
+# - Rödl & Partner: eigene Karriereseite ohne lesbare Stellenliste;
+#   inseriert aber regelmäßig bei der Arbeitsagentur
 
 
 # --------------------------------------------------------------
@@ -189,6 +216,56 @@ sitz = "Mannheim"
 system = "personio"
 konto = "imap-ma-consultants-ag"
 bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Lincoln International"
+system = "personio"
+konto = "lincoln-international-ag"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Network Corporate Finance"
+aliase = ["NCF"]
+sitz = "Frankfurt am Main"
+system = "join"
+konto = "ncf"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Sancovia"
+aliase = ["Sancovia Gruppe"]
+sitz = "Frankfurt am Main"
+system = "join"
+konto = "career-sancovia"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Saxenhammer & Co."
+sitz = "Frankfurt am Main"
+system = "join"
+konto = "saxenhammer-co1"
+bereiche = ["M&A / Corporate Finance"]
+
+[[firma]]
+name = "Capitalmind Investec"
+aliase = ["Investec Advisory"]
+system = "join"
+konto = "capitalmind"
+bereiche = ["M&A / Corporate Finance"]
+
+# Ebenfalls bei JOIN, Standort aber unklar – bei Bedarf # entfernen:
+# [[firma]]
+# name = "Steinbeis M&A Partners"
+# system = "join"
+# konto = "steinbeis-finance"
+# bereiche = ["M&A / Corporate Finance"]
+
+# Nicht automatisch abrufbar (Stand 26.11.2026):
+# - Lazard: Bewerberportal (Oleeo) ohne lesbare Stellenliste
+# - Rothschild & Co: eigene Seite ohne lesbare Stellenliste
+# - Emporion, hillstreet advisory partners, Terras, Comitis Capital:
+#   kein eigenes Bewerbersystem gefunden. Ihre Stellen erscheinen teils
+#   bei Arbeitnow (siehe einstellungen.toml) – sonst selbst einwerfen.
 
 [[firma]]
 name = "Houlihan Lokey"

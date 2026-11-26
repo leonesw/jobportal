@@ -1,0 +1,24 @@
+# ==============================================================
+#  Stellenradar – selbst eingeworfene Stellen
+#
+#  Stellen, die das Radar nicht selbst findet (z. B. nur auf
+#  LinkedIn), trägst du hier ein – am einfachsten über das
+#  Formular "Stelle einwerfen" (Webseite → "Stelle einwerfen").
+#  Das Radar ruft diese Links nicht ab; es übernimmt Titel,
+#  Firma und Ort und ordnet sie wie alle Stellen ein.
+#
+#  Pflicht: link, titel. Sinnvoll: firma, ort.
+#  Optional: art (Vollzeit, Praktikum, Werkstudent …), bereich,
+#  region, datum (Tag der Anzeige), bis (ab dann ausblenden).
+#  Ohne "bis" bleibt eine Stelle so lange wie max_alter_tage.
+#  Entfernen: den ganzen Block löschen.
+# ==============================================================
+
+# Beispiel (ohne # davor würde es gelten):
+# [[stelle]]
+# link = "https://www.linkedin.com/jobs/view/1234567890/"
+# titel = "Praktikant M&A (m/w/d)"
+# firma = "Beispiel Capital"
+# ort = "Frankfurt am Main"
+# art = "Praktikum"
+# datum = 2026-11-20
