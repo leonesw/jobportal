@@ -1,0 +1,68 @@
+# Stellenradar – Stelle einwerfen
+# Läuft, wenn du über das Formular "Stelle einwerfen" (Reiter "Issues") eine
+# Stelle meldest. Nur Formulare der Repository-Besitzerin bzw. des -Besitzers
+# werden verarbeitet; Meldungen anderer Personen bleiben unbeachtet.
+# Die Stelle wird an manuell.toml angehängt, das Issue mit einer Antwort
+# geschlossen und "Stellen sammeln" gestartet.
+
+name: Stelle einwerfen
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write   # manuell.toml speichern
+  issues: write     # Antwort schreiben und Issue schließen
+  actions: write    # "Stellen sammeln" starten
+
+concurrency:
+  group: stellenradar-einwerfen
+  cancel-in-progress: false
+
+jobs:
+  einwerfen:
+    if: github.event.issue.user.login == github.repository_owner && contains(github.event.issue.body, '### Link zur Stelle')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dateien holen
+        uses: actions/checkout@v7
+
+      - name: Stelle prüfen und eintragen
+        id: eintragen
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          EINWURF_ANTWORT: ${{ runner.temp }}/antwort.md
+        run: python3 sammler.py --einwerfen
+
+      - name: manuell.toml speichern
+        if: steps.eintragen.outputs.ergebnis == 'ok'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manuell.toml
+          git commit -m "Stelle eingeworfen (#${{ github.event.issue.number }})" --quiet
+          for versuch in 1 2 3; do
+            git pull --rebase --quiet origin "$GITHUB_REF_NAME" && git push --quiet origin "HEAD:$GITHUB_REF_NAME" && exit 0
+            sleep 5
+          done
+          echo "::error::manuell.toml konnte nicht gespeichert werden."
+          exit 1
+
+      - name: Antworten und Issue schließen
+        if: always() && steps.eintragen.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMMER: ${{ github.event.issue.number }}
+          ANTWORT: ${{ runner.temp }}/antwort.md
+        run: |
+          [ -s "$ANTWORT" ] || echo "Das Eintragen ist fehlgeschlagen – Details im Reiter Actions unter „Stelle einwerfen“." > "$ANTWORT"
+          gh issue comment "$NUMMER" --repo "$GITHUB_REPOSITORY" --body-file "$ANTWORT"
+          gh issue close "$NUMMER" --repo "$GITHUB_REPOSITORY"
+
+      - name: Stellen sammeln starten
+        if: steps.eintragen.outputs.ergebnis == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run stellen-sammeln.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
