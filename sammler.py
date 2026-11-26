@@ -72,7 +72,7 @@ BA_HEADER = {
     "User-Agent": "Stellenradar/1.3 (privates Bewerbungsportal)",
 }
 WEB_HEADER = {
-    "User-Agent": "Mozilla/5.0 (compatible; Stellenradar/1.6; privates Bewerbungsportal)",
+    "User-Agent": "Mozilla/5.0 (compatible; Stellenradar/1.6.1; privates Bewerbungsportal)",
     "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
 }
 
@@ -913,7 +913,12 @@ def text_von(element, pfad: str) -> str:
 def quelle_personio(firma: dict, heute: date) -> list[dict]:
     konto = firma["konto"]
     basis = f"https://{konto}.jobs.personio.{firma.get('domain', 'de')}"
-    xml = abrufen(f"{basis}/xml?language=de", art="text")
+    try:
+        xml = abrufen(f"{basis}/xml?language=de", art="text")
+    except urllib.error.HTTPError as fehler:
+        if fehler.code != 404:
+            raise
+        return _personio_ohne_xml(firma, basis)  # Firma hat den XML-Feed abgeschaltet
     wurzel = ET.fromstring(xml.encode("utf-8"))
     ergebnis = []
     for pos in wurzel.iter("position"):
@@ -935,6 +940,56 @@ def quelle_personio(firma: dict, heute: date) -> list[dict]:
             "arten": arten,
             "stufe": stufe_aus_system(text_von(pos, "seniority")),
         })
+    return ergebnis
+
+
+def _personio_ohne_xml(firma: dict, basis: str) -> list[dict]:
+    """Personio-Seite ohne XML-Feed: zuerst die Suchdaten (search.json), sonst die Links der Stellenliste.
+    Orte stehen dort nicht verlässlich – dann gilt "sitz" aus firmen.toml."""
+    try:
+        daten = abrufen(f"{basis}/search.json?language=de")
+    except Exception:  # noqa: BLE001
+        daten = None
+    ergebnis = []
+    if isinstance(daten, list) and daten:
+        for j in daten:
+            if not isinstance(j, dict) or not j.get("id") or not j.get("name"):
+                continue
+            buero = j.get("office") or j.get("offices") or []
+            orte = [str(o.get("name") if isinstance(o, dict) else o) for o in (buero if isinstance(buero, list) else [buero])]
+            ergebnis.append({
+                "id": str(j["id"]),
+                "titel": str(j["name"]),
+                "firma": firma["name"],
+                "orte": [o for o in orte if o and o != "None"],
+                "datum": als_datum(j.get("created_at") or j.get("createdAt")),
+                "link": f"{basis}/job/{j['id']}?language=de",
+                "hinweise": [str(j.get("department") or ""), str(j.get("category") or "")],
+                "arten": arten_aus_text(f"{j.get('employment_type') or ''} {j.get('schedule') or ''}"),
+                "stufe": stufe_aus_system(j.get("seniority") or ""),
+            })
+        return ergebnis
+    seite = abrufen(f"{basis}/?language=de", art="text", kopf={"Accept": "text/html"})
+    gesehen = set()
+    for a in _knoten(_baum(seite), "a"):
+        m = re.search(r"/job/(\d+)", a["attrs"].get("href", ""))
+        teile = _textteile(a)
+        if not m or m.group(1) in gesehen or not teile:
+            continue
+        gesehen.add(m.group(1))
+        ergebnis.append({
+            "id": m.group(1),
+            "titel": teile[0],
+            "firma": firma["name"],
+            "orte": [],
+            "datum": None,
+            "link": f"{basis}/job/{m.group(1)}?language=de",
+            "hinweise": teile[1:4],
+            "arten": arten_aus_text(" ".join(teile[1:])),
+            "stufe": None,
+        })
+    if not ergebnis and "/job/" not in seite:
+        raise ValueError("Personio: kein XML-Feed und keine Stellenliste gefunden")
     return ergebnis
 
 
@@ -1368,6 +1423,7 @@ def quelle_csb(firma: dict, heute: date) -> list[dict]:
     basis = firma["basis"].rstrip("/")
     wurzel = re.match(r"https?://[^/]+", basis).group(0)
     gefunden: dict[str, dict] = {}
+    summe_gesamt = 0
     for ort in firma.get("suche") or [""]:
         start, gesamt = 0, None
         while start < 25 * firma.get("max_seiten", 40):
@@ -1380,6 +1436,7 @@ def quelle_csb(firma: dict, heute: date) -> list[dict]:
             if gesamt is None:
                 g = re.search(r'paginationLabel.*?(?:von|of)\s*(?:<b>)?\s*([\d.,]+)', seite, re.S | re.I)
                 gesamt = als_zahl(re.sub(r"[.,]", "", g.group(1)), 0) if g else 0
+                summe_gesamt += gesamt
             zeilen = 0
             for zeile in re.split(r'<tr[^>]*class="[^"]*\bdata-row\b', seite)[1:]:
                 zeile = zeile.split("</tr>", 1)[0]
@@ -1391,25 +1448,34 @@ def quelle_csb(firma: dict, heute: date) -> list[dict]:
                 nummer = re.search(r"/(\d{5,})/?(?:\?|$)", link)
                 schluessel = nummer.group(1) if nummer else link
                 zeilen += 1
-                if schluessel in gefunden:  # schon über einen anderen Ort gefunden
-                    continue
                 ort_text = re.sub(r",\s*(?:[A-Z]{2}\b|\d{5})", "", _csb_feld(zeile, "jobLocation")).strip(" ,")
+                # "Berlin +6 more…" oder "mehrere Standorte": Die Stelle wurde über den gesuchten Ort
+                # gefunden, gilt also (auch) dort.
+                mehrere = re.search(r"\+\s*\d+\s*(?:more|weitere)|mehrere standorte|multiple locations", ort_text, re.I)
+                ort_text = re.sub(r"\s*\+\s*\d+\s*(?:more|weitere)\S*.*$|mehrere standorte|multiple locations", "",
+                                  ort_text, flags=re.I).strip(" ,")
+                if schluessel in gefunden:  # schon über einen anderen Ort gefunden
+                    if mehrere and ort and ort not in gefunden[schluessel]["orte"]:
+                        gefunden[schluessel]["orte"].append(ort)
+                    continue
                 datum_roh = _csb_feld(zeile, "jobDate")
                 gefunden[schluessel] = {
                     "id": schluessel,
                     "titel": ohne_tags(a.group(2)),
                     "firma": firma["name"],
-                    "orte": [ort_text] if ort_text else [],
+                    "orte": [x for x in ([ort] if mehrere and ort else []) + [ort_text] if x],
                     "datum": als_datum(datum_roh) or datum_text(datum_roh),
                     "link": link.split("?", 1)[0],
                     "hinweise": [x for x in (_csb_feld(zeile, "jobDepartment"), _csb_feld(zeile, "jobFacility")) if x],
                     "arten": arten_aus_text(_csb_feld(zeile, "jobShifttype")),
                     "stufe": None,
                 }
-            start += 25
+            start += zeilen  # manche Seiten zeigen 10 oder 20 statt 25 Stellen je Seite
             time.sleep(PAUSE_SEKUNDEN)
             if not zeilen or (gesamt and start >= gesamt):
                 break
+    if summe_gesamt:  # Summe über alle Suchen (Stellen an mehreren Orten zählen mehrfach)
+        TREFFER_LAUT_SUCHE[herkunft_von(firma)] = summe_gesamt
     return list(gefunden.values())
 
 
@@ -1432,6 +1498,8 @@ QUELLEN = {
 
 # Wie viele Stellen eine Quelle selbst meldet (zum Prüfen, ob alle geladen wurden)
 GESAMT_LAUT_QUELLE: dict[str, int] = {}
+# Treffer laut Stellensuche, summiert über mehrere Suchen (nur zur Information im Bericht)
+TREFFER_LAUT_SUCHE: dict[str, int] = {}
 
 
 def herkunft_von(firma: dict) -> str:
@@ -1514,6 +1582,7 @@ def sammle_firmen(cfg: dict, heute: date, protokoll: list) -> tuple[list[dict], 
     """Fragt alle Firmen ab. Liefert (Stellen, Bericht je Firma, ausgefallene Herkünfte)."""
     stellen, bericht, ausgefallen = [], [], set()
     GESAMT_LAUT_QUELLE.clear()
+    TREFFER_LAUT_SUCHE.clear()
     for firma in cfg["firmen"]:
         abruf = QUELLEN.get(firma["system"])
         eintrag = {"name": firma["name"], "system": firma["system"], "herkunft": herkunft_von(firma)}
@@ -1546,6 +1615,8 @@ def sammle_firmen(cfg: dict, heute: date, protokoll: list) -> tuple[list[dict], 
                        beispiele_kein_bereich=sorted(set(proben["kein_bereich"]))[:15],
                        beispiele_ausgeschlossen=sorted(set(proben["ausgeschlossen"]))[:10],
                        orte_ausserhalb=[o for o, _ in proben["ausserhalb"].most_common(8)])
+        if TREFFER_LAUT_SUCHE.get(eintrag["herkunft"]):
+            eintrag["treffer_laut_suche"] = TREFFER_LAUT_SUCHE[eintrag["herkunft"]]
         gesamt = GESAMT_LAUT_QUELLE.get(eintrag["herkunft"])
         if gesamt:
             eintrag["gesamt_laut_seite"] = gesamt

@@ -217,8 +217,11 @@ system = "personio"
 konto = "imap-ma-consultants-ag"
 bereiche = ["M&A / Corporate Finance"]
 
+# Personio ohne XML-Feed: Das Radar liest dann die Stellenliste der Seite.
+# Alle deutschen Stellen sind in Frankfurt (daher "sitz").
 [[firma]]
 name = "Lincoln International"
+sitz = "Frankfurt am Main"
 system = "personio"
 konto = "lincoln-international-ag"
 bereiche = ["M&A / Corporate Finance"]
