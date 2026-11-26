@@ -1,0 +1,89 @@
+name: Stelle einwerfen
+description: Eine Stelle ins Radar aufnehmen, die es nicht selbst findet (z. B. nur auf LinkedIn).
+title: "Stelle einwerfen"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Das Radar ruft den Link **nicht** ab (LinkedIn verbietet automatische Abrufe). Es übernimmt Titel, Firma und Ort, wie du sie hier einträgst, und ordnet die Stelle wie alle anderen ein. Nach dem Absenden dauert es etwa 3–5 Minuten, bis sie auf der Webseite steht.
+  - type: input
+    id: link
+    attributes:
+      label: Link zur Stelle
+      description: Adresse der Anzeige, z. B. https://www.linkedin.com/jobs/view/1234567890/ (Tracking-Zusätze werden entfernt)
+      placeholder: https://www.linkedin.com/jobs/view/…
+    validations:
+      required: true
+  - type: input
+    id: titel
+    attributes:
+      label: Stellentitel
+      placeholder: Praktikant M&A (m/w/d)
+    validations:
+      required: true
+  - type: input
+    id: firma
+    attributes:
+      label: Firma
+    validations:
+      required: true
+  - type: input
+    id: ort
+    attributes:
+      label: Ort
+      placeholder: Frankfurt am Main
+    validations:
+      required: true
+  - type: dropdown
+    id: art
+    attributes:
+      label: Anstellungsart
+      options:
+        - automatisch erkennen
+        - Vollzeit
+        - Teilzeit
+        - Praktikum
+        - Werkstudent
+        - Trainee
+        - Abschlussarbeit
+      default: 0
+    validations:
+      required: true
+  - type: dropdown
+    id: bereich
+    attributes:
+      label: Bereich
+      description: Nur nötig, wenn der Titel den Bereich nicht verrät (z. B. „Analyst (m/w/d)“).
+      options:
+        - automatisch erkennen
+        - Transaction Services / FDD
+        - M&A / Corporate Finance
+        - Bewertung / Valuation
+        - Restrukturierung
+        - Debt Advisory
+        - Private Equity
+        - Investment Banking
+        - Corporate Development
+        - Wirtschaftsprüfung
+        - Interne Revision
+      default: 0
+    validations:
+      required: true
+  - type: dropdown
+    id: region
+    attributes:
+      label: Region
+      description: Nur nötig, wenn der Ort nicht in einer deiner Regionen liegt (z. B. „Germany“).
+      options:
+        - automatisch erkennen
+        - Frankfurt/Rhein-Main
+        - Rhein-Neckar
+        - Bundesweit / Remote
+      default: 0
+    validations:
+      required: true
+  - type: input
+    id: datum
+    attributes:
+      label: Datum der Anzeige
+      description: Optional, z. B. 20.11.2026. Leer = heute.
